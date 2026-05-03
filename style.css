@@ -1,0 +1,292 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --bg: #0a0e1a;
+  --bg2: #111827;
+  --accent: #00d4ff;
+  --accent2: #ff6b35;
+  --text: #e8eaf6;
+  --text-dim: #7986cb;
+  --red: #e74c3c;
+  --blue: #3498db;
+  --green: #2ecc71;
+  --orange: #f39c12;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  height: 100dvh;
+  overflow: hidden;
+  user-select: none;
+}
+
+.hidden { display: none !important; }
+
+/* ===== 選單 ===== */
+#menuScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  gap: 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+#menuScreen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 50%, #00d4ff15 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, #ff6b3515 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.game-title {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900;
+  font-size: clamp(2.5rem, 7vw, 5rem);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, var(--accent), #7c3aed, var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 30px #00d4ff60);
+  line-height: 1.1;
+  text-align: center;
+}
+
+.game-subtitle {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  margin-top: -20px;
+}
+
+.menu-panel {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(0,212,255,0.2);
+  border-radius: 16px;
+  padding: 36px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 320px;
+  backdrop-filter: blur(10px);
+}
+
+.menu-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: -10px;
+}
+
+.player-count-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.player-count-selector select {
+  flex: 1;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(0,212,255,0.3);
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.1rem;
+  padding: 12px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  text-align: center;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), #0099cc);
+  border: none;
+  color: #000;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  padding: 16px 32px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px #00d4ff40;
+}
+
+.btn-primary:active { transform: translateY(0); }
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--text-dim);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.9rem;
+  padding: 12px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ===== 匹配畫面 ===== */
+#matchmakingScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  gap: 28px;
+}
+
+.match-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.8rem;
+  color: var(--accent);
+  letter-spacing: 0.15em;
+}
+
+.match-info {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 2;
+}
+
+#matchStatus {
+  font-size: 1.2rem;
+  color: var(--text);
+  letter-spacing: 0.05em;
+}
+
+.spinner {
+  width: 60px;
+  height: 60px;
+  border: 3px solid rgba(0,212,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== 遊戲畫面 ===== */
+#gameScreen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+#gameHUD {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: rgba(0,0,0,0.6);
+  border-bottom: 1px solid rgba(0,212,255,0.15);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.hud-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.hud-label { color: var(--text-dim); }
+.hud-value { color: var(--text); font-weight: bold; }
+
+.hud-sep {
+  color: rgba(255,255,255,0.1);
+  font-size: 1.2rem;
+}
+
+.hud-hint {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  opacity: 0.6;
+}
+
+#gameContainer {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+/* ===== 遊戲結束畫面 ===== */
+#gameoverScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  gap: 24px;
+}
+
+#gameoverTitle {
+  font-family: 'Orbitron', monospace;
+  font-size: 3rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+#winnerText {
+  font-size: 1.4rem;
+  color: var(--text-dim);
+}
+
+/* ===== 動態星點背景 ===== */
+.stars {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.star {
+  position: absolute;
+  background: white;
+  border-radius: 50%;
+  animation: twinkle var(--d) ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+  from { opacity: 0.1; }
+  to { opacity: 0.8; }
+}
