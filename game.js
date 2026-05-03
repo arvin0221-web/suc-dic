@@ -257,23 +257,26 @@ function setupFirebaseListeners(roomId) {
   });
   dbListeners.push(() => towersRef.off());
 
-  // 監聽飛行士兵
+  // 監聽飛行士兵（child_added 顯示動畫，child_removed 清除）
   const soldiersRef = db.ref(`games/${roomId}/movingSoldiers`);
-  soldiersRef.on('value', snap => {
-    const data = snap.val();
-    if (data) {
-      // 合併：保留本地已有的（有動畫進度），新增沒有的
-      const incoming = Object.values(data);
-      incoming.forEach(s => {
-        if (!gameState.soldiers.find(ls => ls.id === s.id)) {
-          s.progress = 0;
-          gameState.soldiers.push(s);
-        }
-      });
-    } else {
-      gameState.soldiers = gameState.soldiers.filter(s => s.arrivedAt);
-    }
+
+  soldiersRef.on('child_added', snap => {
+    const sg = snap.val();
+    if (!sg) return;
+    // 自己發的已經在本地了，不重複加
+    if (gameState.soldiers.find(s => s.id === sg.id)) return;
+    // 計算目前進度（考慮網路延遲）
+    const now = Date.now();
+    const elapsed = now - sg.sentAt;
+    const progress = Math.max(0, Math.min(elapsed / sg.travelTime, 0.98));
+    gameState.soldiers.push({ ...sg, progress });
   });
+
+  soldiersRef.on('child_removed', snap => {
+    const sg = snap.val();
+    if (sg) gameState.soldiers = gameState.soldiers.filter(s => s.id !== sg.id);
+  });
+
   dbListeners.push(() => soldiersRef.off());
 
   // 監聽遊戲結束
@@ -383,14 +386,15 @@ async function sendSoldiers(fromTower, toTower) {
   const roomId = gameState.roomId;
   const soldierGroupId = 'sg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
 
-  // 本地立即減少士兵
-  const newFromSoldiers = fromTower.soldiers - count;
+  // 立即扣除兵力
+  const newFromSoldiers = Math.max(0, fromTower.soldiers - count);
   await db.ref(`games/${roomId}/towers/${fromTower.id}/soldiers`).set(newFromSoldiers);
 
-  // 計算飛行時間
+  // 計算飛行時間（基於地圖座標距離）
   const dist = Math.hypot(toTower.x - fromTower.x, toTower.y - fromTower.y);
   const travelTime = (dist / SOLDIER_MOVE_SPEED) * 1000;
-  const arriveAt = Date.now() + travelTime;
+  const sentAt = Date.now();
+  const arriveAt = sentAt + travelTime;
 
   const soldierGroup = {
     id: soldierGroupId,
@@ -402,20 +406,20 @@ async function sendSoldiers(fromTower, toTower) {
     fromY: fromTower.y,
     toX: toTower.x,
     toY: toTower.y,
-    sentAt: Date.now(),
+    sentAt: sentAt,
     arriveAt: arriveAt,
+    travelTime: travelTime,
     progress: 0
   };
 
   // 加入本地動畫
   gameState.soldiers.push({ ...soldierGroup });
 
-  // 寫入 Firebase（讓其他玩家看到）
+  // 寫入 Firebase（讓其他玩家看到動畫）
   await db.ref(`games/${roomId}/movingSoldiers/${soldierGroupId}`).set(soldierGroup);
 
-  // 安排抵達處理
-  const delay = arriveAt - Date.now();
-  setTimeout(() => handleSoldierArrival(soldierGroup), delay);
+  // 只有發送方負責處理抵達
+  setTimeout(() => handleSoldierArrival(soldierGroup), travelTime);
 }
 
 // ===== 士兵抵達 =====
@@ -423,21 +427,17 @@ async function handleSoldierArrival(sg) {
   if (gameState.phase !== 'playing') return;
 
   const roomId = gameState.roomId;
-  const toTower = gameState.towers[sg.toTowerId];
-  if (!toTower) return;
+  const towerRef = db.ref(`games/${roomId}/towers/${sg.toTowerId}`);
 
-  const ref = db.ref(`games/${roomId}/towers/${sg.toTowerId}`);
-
-  await db.ref().transaction(root => {
-    if (!root) return root;
-    const tower = root.games?.[roomId]?.towers?.[sg.toTowerId];
-    if (!tower) return root;
+  // 用 transaction 確保原子性
+  await towerRef.transaction(tower => {
+    if (!tower) return tower;
 
     if (tower.owner === sg.ownerIndex) {
-      // 友方塔：增加士兵
+      // 友方塔：增援
       tower.soldiers = (tower.soldiers || 0) + sg.count;
     } else {
-      // 敵方或中立塔
+      // 敵方或中立塔：戰鬥
       const remaining = (tower.soldiers || 0) - sg.count;
       if (remaining <= 0) {
         tower.soldiers = Math.abs(remaining);
@@ -446,13 +446,11 @@ async function handleSoldierArrival(sg) {
         tower.soldiers = remaining;
       }
     }
-
-    // 刪除飛行士兵
-    if (!root.games[roomId].movingSoldiers) root.games[roomId].movingSoldiers = {};
-    delete root.games[roomId].movingSoldiers[sg.id];
-
-    return root;
+    return tower;
   });
+
+  // 移除飛行士兵資料
+  await db.ref(`games/${roomId}/movingSoldiers/${sg.id}`).remove();
 
   // 移除本地動畫
   gameState.soldiers = gameState.soldiers.filter(s => s.id !== sg.id);
