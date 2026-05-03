@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tower Wars | 塔防聯機對戰</title>
+  <link rel="stylesheet" href="css/style.css">
+  
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+
+<!-- 星點背景 -->
+<div class="stars" id="starsContainer"></div>
+
+<!-- ===== 主選單 ===== -->
+<div id="menuScreen">
+  <div>
+    <div class="game-title">Tower Wars</div>
+    <div class="game-subtitle">即時塔防聯機對戰</div>
+  </div>
+
+  <div class="menu-panel">
+    <div class="menu-label">選擇人數</div>
+    <div class="player-count-selector">
+      <select id="playerCountSelect">
+        <option value="2">⚔️ 2 人對戰</option>
+        <option value="3">⚔️ 3 人混戰</option>
+        <option value="4">⚔️ 4 人混戰</option>
+      </select>
+    </div>
+    <button class="btn-primary" id="startMatchBtn">開始配對</button>
+  </div>
+
+  <div style="color: var(--text-dim); font-size: 0.75rem; text-align: center; line-height: 1.8;">
+    拖曳你的塔 → 攻擊敵方塔<br>
+    搶佔所有塔即為勝利
+  </div>
+</div>
+
+<!-- ===== 匹配中畫面 ===== -->
+<div id="matchmakingScreen" class="hidden">
+  <div class="match-title">⚡ 配對中</div>
+  <div class="spinner"></div>
+  <div class="match-info">
+    <div id="matchPlayerCount">等待玩家加入...</div>
+    <div id="matchStatus">搜尋中...</div>
+  </div>
+  <button class="btn-secondary" id="cancelMatchBtn">取消配對</button>
+</div>
+
+<!-- ===== 遊戲畫面 ===== -->
+<div id="gameScreen" class="hidden">
+  <div id="gameHUD">
+    <div class="hud-player">
+      <div class="hud-dot" id="myColorDot"></div>
+      <span class="hud-label" id="myColorLabel">我方</span>
+    </div>
+    <div class="hud-sep">|</div>
+    <span class="hud-label">塔：</span>
+    <span class="hud-value" id="myTowerCount">0</span>
+    <div class="hud-sep">|</div>
+    <span class="hud-label">兵：</span>
+    <span class="hud-value" id="mySoldierCount">0</span>
+    <div class="hud-hint">拖曳你的塔來派遣士兵</div>
+  </div>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+  </div>
+</div>
+
+<!-- ===== 遊戲結束畫面 ===== -->
+<div id="gameoverScreen" class="hidden">
+  <div id="gameoverTitle">🏆 勝利！</div>
+  <div id="winnerText"></div>
+  <button class="btn-primary" id="backToMenuBtn">返回主選單</button>
+</div>
+
+<!-- Firebase 設定 -->
+<script src="js/firebase-config.js"></script>
+<!-- 遊戲邏輯 -->
+<script src="js/game.js"></script>
+
+<script>
+  // 生成星點背景
+  const container = document.getElementById('starsContainer');
+  for (let i = 0; i < 80; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const size = Math.random() * 2 + 1;
+    s.style.cssText = `
+      left: ${Math.random()*100}%;
+      top: ${Math.random()*100}%;
+      width: ${size}px;
+      height: ${size}px;
+      --d: ${2 + Math.random()*3}s;
+      animation-delay: ${Math.random()*3}s;
+    `;
+    container.appendChild(s);
+  }
+</script>
+
+</body>
+</html>
