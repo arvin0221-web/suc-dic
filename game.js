@@ -164,60 +164,65 @@ async function waitForGameInit(roomId) {
 }
 
 // ===== 生成地圖塔 =====
-function generateTowers(playerCount, mapW, mapH) {
+function generateTowers(playerCount) {
   const towers = {};
   const positions = [];
+  const MIN_DIST = 130; // 塔與塔最小距離
+  const W = MAP_W - MAP_PADDING * 2;
+  const H = MAP_H - MAP_PADDING * 2;
 
-  const minDist = 110;
-
-  function randomPos() {
-    let attempts = 0;
-    while (attempts < 200) {
-      const x = MAP_PADDING + Math.random() * (mapW - MAP_PADDING * 2);
-      const y = MAP_PADDING + Math.random() * (mapH - MAP_PADDING * 2);
-      if (positions.every(p => Math.hypot(p.x - x, p.y - y) > minDist)) {
+  // 嘗試放置一個新位置，保證與所有現有位置距離 >= MIN_DIST
+  function tryPlace(maxAttempts = 500) {
+    for (let i = 0; i < maxAttempts; i++) {
+      const x = MAP_PADDING + Math.random() * W;
+      const y = MAP_PADDING + Math.random() * H;
+      if (positions.every(p => Math.hypot(p.x - x, p.y - y) >= MIN_DIST)) {
         return { x: Math.round(x), y: Math.round(y) };
       }
-      attempts++;
     }
     return null;
   }
 
-  // 玩家塔的角落位置
-  const cornerPositions = [
-    { x: MAP_PADDING + 40, y: MAP_PADDING + 40 },
-    { x: mapW - MAP_PADDING - 40, y: mapH - MAP_PADDING - 40 },
-    { x: mapW - MAP_PADDING - 40, y: MAP_PADDING + 40 },
-    { x: MAP_PADDING + 40, y: mapH - MAP_PADDING - 40 },
+  // 玩家塔放在四個角落，確保彼此也滿足距離
+  const corners = [
+    { x: MAP_PADDING + 50, y: MAP_PADDING + 50 },
+    { x: MAP_W - MAP_PADDING - 50, y: MAP_H - MAP_PADDING - 50 },
+    { x: MAP_W - MAP_PADDING - 50, y: MAP_PADDING + 50 },
+    { x: MAP_PADDING + 50, y: MAP_H - MAP_PADDING - 50 },
   ];
 
   for (let i = 0; i < playerCount; i++) {
-    const pos = cornerPositions[i];
-    positions.push(pos);
+    positions.push(corners[i]);
     towers[`tower_p${i}`] = {
       id: `tower_p${i}`,
-      x: pos.x,
-      y: pos.y,
+      x: corners[i].x,
+      y: corners[i].y,
       soldiers: 10,
-      owner: i, // player index
+      owner: i,
       isPlayerStart: true
     };
   }
 
-  // 中立塔
+  // 中立塔：嘗試放滿，放不下就少放
   const neutralCount = MIN_NEUTRAL_TOWERS + Math.floor(Math.random() * (MAX_NEUTRAL_TOWERS - MIN_NEUTRAL_TOWERS + 1));
-  for (let i = 0; i < neutralCount; i++) {
-    const pos = randomPos();
-    if (!pos) break;
+  let placed = 0;
+  let failed = 0;
+  while (placed < neutralCount && failed < 5) {
+    const pos = tryPlace(500);
+    if (!pos) {
+      failed++;
+      continue;
+    }
     positions.push(pos);
-    towers[`tower_n${i}`] = {
-      id: `tower_n${i}`,
+    towers[`tower_n${placed}`] = {
+      id: `tower_n${placed}`,
       x: pos.x,
       y: pos.y,
       soldiers: 10,
-      owner: -1, // neutral
+      owner: -1,
       isPlayerStart: false
     };
+    placed++;
   }
 
   return towers;
@@ -316,12 +321,29 @@ function setupInputHandlers() {
 
   function getMousePos(e) {
     const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    // touchend 時 e.touches 是空的，要用 e.changedTouches
+    const touch = e.changedTouches ? e.changedTouches[0] : (e.touches ? e.touches[0] : null);
+    const clientX = touch ? touch.clientX : e.clientX;
+    const clientY = touch ? touch.clientY : e.clientY;
     return {
       x: (clientX - rect.left) * (canvas.width / rect.width),
       y: (clientY - rect.top) * (canvas.height / rect.height)
     };
+  }
+
+  function getTowerAtLoose(pos) {
+    // 手機觸控誤差較大，放大判定範圍
+    let best = null, bestDist = Infinity;
+    for (const tower of Object.values(gameState.towers)) {
+      const tx = tower.x * canvas.width / 900;
+      const ty = tower.y * canvas.height / 600;
+      const dist = Math.hypot(pos.x - tx, pos.y - ty);
+      if (dist < TOWER_RADIUS * 2.5 && dist < bestDist) {
+        best = tower;
+        bestDist = dist;
+      }
+    }
+    return best;
   }
 
   function getTowerAt(pos) {
@@ -360,7 +382,8 @@ function setupInputHandlers() {
     if (!dragFromTower) return;
 
     const pos = getMousePos(e);
-    const targetTower = getTowerAt(pos);
+    // 放開時用較寬鬆的判定，避免手指離塔一點點就失效
+    const targetTower = getTowerAtLoose(pos) || getTowerAt(pos);
 
     if (targetTower && targetTower.id !== dragFromTower.id) {
       sendSoldiers(dragFromTower, targetTower);
@@ -690,7 +713,7 @@ function drawHUD() {
   document.getElementById('myTowerCount').textContent = myTowers;
   document.getElementById('mySoldierCount').textContent = Math.floor(mySoldiers);
 }
-
+ 
 // ===== 返回主選單 =====
 function returnToMenu() {
   gameState = {
@@ -709,7 +732,7 @@ function returnToMenu() {
 window.addEventListener('load', () => {
   initCanvas();
   showScreen('menuScreen');
-
+ 
   document.getElementById('startMatchBtn').addEventListener('click', startMatchmaking);
   document.getElementById('cancelMatchBtn').addEventListener('click', returnToMenu);
   document.getElementById('backToMenuBtn').addEventListener('click', returnToMenu);
