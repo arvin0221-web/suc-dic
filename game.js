@@ -98,44 +98,57 @@ async function startMatchmaking() {
   // 當玩家斷線時移除
   db.ref(`waiting/${targetRoomId}/players/${gameState.playerId}`).onDisconnect().remove();
 
-  // 監聽房間玩家數量
+  // 先監聽 games 節點，等 host 寫入後才開始遊戲
+  const gameStatusRef = db.ref(`games/${targetRoomId}/status`);
+  gameStatusRef.on('value', (snap) => {
+    if (snap.val() === 'playing') {
+      gameStatusRef.off();
+      db.ref(`games/${targetRoomId}`).once('value').then(snap => {
+        const data = snap.val();
+        // 從 Firebase 的玩家資料確認自己的 index
+        const sortedPlayers = Object.values(data.players).sort((a, b) => a.joinedAt - b.joinedAt);
+        gameState.playerIndex = sortedPlayers.findIndex(p => p.id === gameState.playerId);
+        startGame(targetRoomId, data.towers);
+      });
+    }
+  });
+
+  // 監聽房間玩家數量，只有最早進房的人負責初始化
   const unsubWaiting = roomRef.on('value', async (snap) => {
     const room = snap.val();
     if (!room) return;
 
-    const players = Object.keys(room.players || {});
+    const players = Object.values(room.players || {});
     const current = players.length;
     const needed = room.playerCount;
 
     document.getElementById('matchStatus').textContent = `已找到 ${current} / ${needed} 位玩家`;
 
     if (current >= needed) {
-      // 足夠人數，開始遊戲
       roomRef.off('value', unsubWaiting);
 
-      // 指派玩家順序
-      const sortedPlayers = Object.values(room.players).sort((a, b) => a.joinedAt - b.joinedAt);
-      gameState.playerIndex = sortedPlayers.findIndex(p => p.id === gameState.playerId);
+      // 按加入時間排序，joinedAt 最小的才是 host
+      const sortedPlayers = players.sort((a, b) => a.joinedAt - b.joinedAt);
+      const isHost = sortedPlayers[0].id === gameState.playerId;
 
-      if (gameState.isHost || gameState.playerIndex === 0) {
+      if (isHost) {
         await initGameAsHost(targetRoomId, sortedPlayers);
-      } else {
-        await waitForGameInit(targetRoomId);
       }
+      // 非 host 已經在上面監聽 games 節點，等 host 寫入後自動開始
     }
   });
 }
 
 async function initGameAsHost(roomId, players) {
-  const mapW = 900, mapH = 600;
-  const towers = generateTowers(players.length, mapW, mapH);
+  const towers = generateTowers(players.length);
 
   const gameData = {
     status: 'playing',
     startTime: Date.now(),
     playerCount: players.length,
+    // 保留 joinedAt 讓其他玩家能正確算出自己的 index
     players: players.reduce((acc, p, i) => {
-      acc[p.id] = { id: p.id, index: i, color: PLAYER_COLORS[i], alive: true };
+      acc[p.id] = { id: p.id, index: i, joinedAt: p.joinedAt, color: PLAYER_COLORS[i] };
       return acc;
     }, {}),
     towers: towers
@@ -144,7 +157,8 @@ async function initGameAsHost(roomId, players) {
   await db.ref(`games/${roomId}`).set(gameData);
   await db.ref(`waiting/${roomId}`).remove();
 
-  startGame(roomId, towers);
+  // host 自己也等 status 觸發，統一流程
+  // （set 完後 status listener 會馬上觸發）
 }
 
 async function waitForGameInit(roomId) {
@@ -713,7 +727,7 @@ function drawHUD() {
   document.getElementById('myTowerCount').textContent = myTowers;
   document.getElementById('mySoldierCount').textContent = Math.floor(mySoldiers);
 }
- 
+
 // ===== 返回主選單 =====
 function returnToMenu() {
   gameState = {
@@ -732,7 +746,7 @@ function returnToMenu() {
 window.addEventListener('load', () => {
   initCanvas();
   showScreen('menuScreen');
- 
+
   document.getElementById('startMatchBtn').addEventListener('click', startMatchmaking);
   document.getElementById('cancelMatchBtn').addEventListener('click', returnToMenu);
   document.getElementById('backToMenuBtn').addEventListener('click', returnToMenu);
