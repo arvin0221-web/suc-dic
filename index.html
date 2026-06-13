@@ -2,30 +2,27 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>姑姑嘎嘎廉價塔防</title>
-  <meta name="description" content="姑姑嘎嘎廉價塔防 — 免費線上多人即時塔防對戰遊戲，支援2到4人聯機，搶佔所有塔即獲勝！">
-  <meta name="keywords" content="姑姑嘎嘎廉價塔防,塔防,多人遊戲,聯機對戰,免費遊戲">
-  <meta name="author" content="姑姑嘎嘎廉價塔防">
-  <meta property="og:title" content="姑姑嘎嘎廉價塔防">
-  <meta property="og:description" content="免費線上多人即時塔防對戰，2到4人聯機，搶佔所有塔即獲勝！">
-  <meta property="og:type" content="website">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Tower Wars 姑姑嘎嘎廉價塔防</title>
+  <meta name="description" content="即時多人塔防佔領對戰 — 2到4人聯機，搶佔所有塔即獲勝！">
+  <meta name="theme-color" content="#070b14">
   <link rel="stylesheet" href="style.css">
-  
+
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
 
-<!-- 星點背景 -->
+<!-- Nebula + Stars background -->
+<div class="nebula"></div>
 <div class="stars" id="starsContainer"></div>
 
 <!-- ===== 主選單 ===== -->
 <div id="menuScreen">
   <div>
     <div class="game-title">Tower Wars</div>
-    <div class="game-subtitle">即時塔防聯機對戰</div>
+    <div class="game-subtitle">即時塔防佔領對戰</div>
   </div>
 
   <div class="menu-panel">
@@ -37,19 +34,21 @@
         <option value="4">⚔️ 4 人混戰</option>
       </select>
     </div>
-    <button class="btn-primary" id="startMatchBtn">開始配對</button>
+    <button class="btn-primary" id="startMatchBtn">▶ 開始配對</button>
   </div>
 
-  <div style="color: var(--text-dim); font-size: 0.75rem; text-align: center; line-height: 1.8;">
-    拖曳你的塔 → 攻擊敵方塔<br>
-    搶佔所有塔即為勝利
+  <div class="menu-hint">
+    拖曳你的塔 → 派遣士兵攻佔目標<br>
+    搶佔所有塔即獲勝利
   </div>
 </div>
 
-<!-- ===== 匹配中畫面 ===== -->
+<!-- ===== 匹配中 ===== -->
 <div id="matchmakingScreen" class="hidden">
   <div class="match-title">⚡ 配對中</div>
-  <div class="spinner"></div>
+  <div class="spinner-wrap">
+    <div class="spinner-inner"></div>
+  </div>
   <div class="match-info">
     <div id="matchPlayerCount">等待玩家加入...</div>
     <div id="matchStatus">搜尋中...</div>
@@ -65,11 +64,14 @@
       <span class="hud-label" id="myColorLabel">我方</span>
     </div>
     <div class="hud-sep">|</div>
-    <span class="hud-label">塔：</span>
-    <span class="hud-value" id="myTowerCount">0</span>
-    <div class="hud-sep">|</div>
-    <span class="hud-label">兵：</span>
-    <span class="hud-value" id="mySoldierCount">0</span>
+    <div class="hud-badge">
+      <span class="hud-label">塔</span>
+      <span class="hud-value" id="myTowerCount">0</span>
+    </div>
+    <div class="hud-badge">
+      <span class="hud-label">兵</span>
+      <span class="hud-value" id="mySoldierCount">0</span>
+    </div>
     <div class="hud-hint">拖曳你的塔來派遣士兵</div>
   </div>
   <div id="gameContainer">
@@ -77,9 +79,10 @@
   </div>
 </div>
 
-<!-- ===== 遊戲結束畫面 ===== -->
+<!-- ===== 結束畫面 ===== -->
 <div id="gameoverScreen" class="hidden">
   <div id="gameoverTitle">🏆 勝利！</div>
+  <div class="gameover-divider"></div>
   <div id="winnerText"></div>
   <button class="btn-primary" id="backToMenuBtn">返回主選單</button>
 </div>
@@ -92,21 +95,21 @@
 <script>
   // 生成星點背景
   const container = document.getElementById('starsContainer');
-  for (let i = 0; i < 80; i++) {
-    const s = document.createElement('div');
+  const starCount  = window.innerWidth < 600 ? 50 : 100;
+  for (let i = 0; i < starCount; i++) {
+    const s    = document.createElement('div');
     s.className = 'star';
-    const size = Math.random() * 2 + 1;
+    const size  = Math.random() * 1.8 + 0.6;
     s.style.cssText = `
       left: ${Math.random()*100}%;
-      top: ${Math.random()*100}%;
-      width: ${size}px;
+      top:  ${Math.random()*100}%;
+      width:  ${size}px;
       height: ${size}px;
-      --d: ${2 + Math.random()*3}s;
-      animation-delay: ${Math.random()*3}s;
+      --d: ${2.5 + Math.random()*4}s;
+      animation-delay: ${Math.random()*4}s;
     `;
     container.appendChild(s);
   }
 </script>
-
 </body>
 </html>

@@ -1,16 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
 
 :root {
-  --bg: #0a0e1a;
-  --bg2: #111827;
-  --accent: #00d4ff;
-  --accent2: #ff6b35;
-  --text: #e8eaf6;
-  --text-dim: #7986cb;
-  --red: #e74c3c;
-  --blue: #3498db;
-  --green: #2ecc71;
-  --orange: #f39c12;
+  --bg:        #070b14;
+  --bg2:       #0d1425;
+  --bg3:       #111e35;
+  --accent:    #2f86ff;
+  --accent2:   #ff4757;
+  --accent3:   #2ed573;
+  --text:      #dde6f5;
+  --text-dim:  #5a7fa8;
+  --text-muted:#3a5570;
+  --border:    rgba(47,134,255,0.18);
+  --red:    #ff4757;
+  --blue:   #2f86ff;
+  --green:  #2ed573;
+  --orange: #ffa502;
+  --glow-blue: 0 0 20px rgba(47,134,255,0.4);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,12 +27,215 @@ body {
   height: 100dvh;
   overflow: hidden;
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .hidden { display: none !important; }
 
-/* ===== 選單 ===== */
+/* =====================================================
+   STARS BACKGROUND
+   ===================================================== */
+.stars {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.star {
+  position: absolute;
+  background: white;
+  border-radius: 50%;
+  animation: twinkle var(--d) ease-in-out infinite alternate;
+}
+@keyframes twinkle {
+  from { opacity: 0.05; transform: scale(0.8); }
+  to   { opacity: 0.75; transform: scale(1.2); }
+}
+
+/* Nebula overlay */
+.nebula {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 50% at 15% 55%, rgba(47,134,255,0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 60% at 85% 20%, rgba(255,71,87,0.05) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 40% at 50% 80%, rgba(46,213,115,0.04) 0%, transparent 70%);
+}
+
+/* =====================================================
+   MENU SCREEN
+   ===================================================== */
 #menuScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  gap: 36px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Scanline overlay */
+#menuScreen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0,0,0,0.07) 3px,
+    rgba(0,0,0,0.07) 4px
+  );
+  pointer-events: none;
+}
+
+.game-title {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900;
+  font-size: clamp(2.4rem, 6.5vw, 4.8rem);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #2f86ff 0%, #a78bfa 50%, #ff4757 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 40px rgba(47,134,255,0.5));
+  line-height: 1.05;
+  text-align: center;
+  animation: titlePulse 4s ease-in-out infinite alternate;
+}
+@keyframes titlePulse {
+  from { filter: drop-shadow(0 0 30px rgba(47,134,255,0.4)); }
+  to   { filter: drop-shadow(0 0 60px rgba(167,139,250,0.6)); }
+}
+
+.game-subtitle {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  margin-top: -26px;
+  animation: fadeSlideIn 1s ease 0.3s both;
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.menu-panel {
+  background: rgba(13,20,37,0.85);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 36px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 320px;
+  backdrop-filter: blur(16px);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 24px 64px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  animation: fadeSlideIn 0.8s ease 0.1s both;
+  position: relative;
+  z-index: 2;
+}
+
+.menu-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  margin-bottom: -8px;
+}
+
+.player-count-selector select {
+  width: 100%;
+  background: rgba(7,11,20,0.8);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1rem;
+  padding: 14px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  text-align: center;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.player-count-selector select:hover {
+  border-color: rgba(47,134,255,0.5);
+  box-shadow: 0 0 12px rgba(47,134,255,0.15);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #2f86ff, #1a6ae0);
+  border: none;
+  color: #fff;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  padding: 17px 32px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(47,134,255,0.3);
+}
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+  border-radius: inherit;
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(47,134,255,0.5);
+}
+.btn-primary:active { transform: translateY(0); }
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-dim);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.85rem;
+  padding: 12px 24px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.05em;
+}
+.btn-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(47,134,255,0.2);
+}
+
+.menu-hint {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-align: center;
+  line-height: 2;
+  letter-spacing: 0.05em;
+  animation: fadeSlideIn 1s ease 0.6s both;
+}
+
+/* =====================================================
+   MATCHMAKING SCREEN
+   ===================================================== */
+#matchmakingScreen {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -35,205 +243,115 @@ body {
   height: 100dvh;
   gap: 32px;
   position: relative;
-  overflow: hidden;
-}
-
-#menuScreen::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse at 20% 50%, #00d4ff15 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 20%, #ff6b3515 0%, transparent 60%);
-  pointer-events: none;
-}
-
-.game-title {
-  font-family: 'Orbitron', monospace;
-  font-weight: 900;
-  font-size: clamp(2.5rem, 7vw, 5rem);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  background: linear-gradient(135deg, var(--accent), #7c3aed, var(--accent2));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  filter: drop-shadow(0 0 30px #00d4ff60);
-  line-height: 1.1;
-  text-align: center;
-}
-
-.game-subtitle {
-  color: var(--text-dim);
-  font-size: 0.9rem;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  margin-top: -20px;
-}
-
-.menu-panel {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(0,212,255,0.2);
-  border-radius: 16px;
-  padding: 36px 48px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  min-width: 320px;
-  backdrop-filter: blur(10px);
-}
-
-.menu-label {
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  margin-bottom: -10px;
-}
-
-.player-count-selector {
-  display: flex;
-  gap: 8px;
-}
-
-.player-count-selector select {
-  flex: 1;
-  background: rgba(0,0,0,0.4);
-  border: 1px solid rgba(0,212,255,0.3);
-  color: var(--text);
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 1.1rem;
-  padding: 12px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  outline: none;
-  appearance: none;
-  text-align: center;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, var(--accent), #0099cc);
-  border: none;
-  color: #000;
-  font-family: 'Orbitron', monospace;
-  font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: 0.1em;
-  padding: 16px 32px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.2s;
-  text-transform: uppercase;
-}
-
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px #00d4ff40;
-}
-
-.btn-primary:active { transform: translateY(0); }
-
-.btn-secondary {
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.2);
-  color: var(--text-dim);
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 0.9rem;
-  padding: 12px 24px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-secondary:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ===== 匹配畫面 ===== */
-#matchmakingScreen {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100dvh;
-  gap: 28px;
+  z-index: 1;
 }
 
 .match-title {
   font-family: 'Orbitron', monospace;
-  font-size: 1.8rem;
+  font-size: 1.7rem;
+  font-weight: 700;
   color: var(--accent);
-  letter-spacing: 0.15em;
+  letter-spacing: 0.18em;
+  text-shadow: 0 0 30px rgba(47,134,255,0.5);
 }
 
 .match-info {
   text-align: center;
   color: var(--text-dim);
-  font-size: 0.9rem;
-  line-height: 2;
+  font-size: 0.85rem;
+  line-height: 2.2;
 }
-
 #matchStatus {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   color: var(--text);
   letter-spacing: 0.05em;
 }
 
-.spinner {
-  width: 60px;
-  height: 60px;
-  border: 3px solid rgba(0,212,255,0.2);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* Fancy spinner */
+.spinner-wrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
 }
-
+.spinner-wrap::before,
+.spinner-wrap::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+}
+.spinner-wrap::before {
+  inset: 0;
+  border: 2px solid rgba(47,134,255,0.12);
+}
+.spinner-wrap::after {
+  inset: 0;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: rgba(47,134,255,0.3);
+  animation: spin 0.9s linear infinite;
+}
+.spinner-inner {
+  position: absolute;
+  inset: 12px;
+  border: 2px solid transparent;
+  border-top-color: #a78bfa;
+  border-left-color: rgba(167,139,250,0.3);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite reverse;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ===== 遊戲畫面 ===== */
+/* =====================================================
+   GAME SCREEN
+   ===================================================== */
 #gameScreen {
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  position: relative;
+  z-index: 1;
 }
 
+/* HUD */
 #gameHUD {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  background: rgba(0,0,0,0.6);
-  border-bottom: 1px solid rgba(0,212,255,0.15);
-  font-size: 0.8rem;
+  gap: 14px;
+  padding: 8px 18px;
+  background: rgba(7,11,20,0.85);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
   flex-shrink: 0;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03);
+}
+.hud-player { display: flex; align-items: center; gap: 8px; }
+.hud-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+.hud-label { color: var(--text-dim); }
+.hud-value { color: var(--text); font-weight: bold; font-size: 0.9rem; }
+.hud-sep   { color: rgba(255,255,255,0.08); font-size: 1.1rem; }
+.hud-hint  {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  opacity: 0.7;
+  letter-spacing: 0.03em;
 }
 
-.hud-player {
+/* Stat badges */
+.hud-badge {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.hud-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.hud-label { color: var(--text-dim); }
-.hud-value { color: var(--text); font-weight: bold; }
-
-.hud-sep {
-  color: rgba(255,255,255,0.1);
-  font-size: 1.2rem;
-}
-
-.hud-hint {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: 0.72rem;
-  opacity: 0.6;
+  gap: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 20px;
+  padding: 3px 12px;
 }
 
 #gameContainer {
@@ -241,52 +359,59 @@ body {
   position: relative;
   overflow: hidden;
 }
-
 #gameCanvas {
   display: block;
   width: 100%;
   height: 100%;
   cursor: crosshair;
+  touch-action: none;
 }
 
-/* ===== 遊戲結束畫面 ===== */
+/* =====================================================
+   GAMEOVER SCREEN
+   ===================================================== */
 #gameoverScreen {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100dvh;
-  gap: 24px;
+  gap: 28px;
+  position: relative;
+  z-index: 1;
 }
 
 #gameoverTitle {
   font-family: 'Orbitron', monospace;
-  font-size: 3rem;
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
   font-weight: 900;
   letter-spacing: 0.1em;
+  animation: titlePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes titlePop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
 }
 
 #winnerText {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   color: var(--text-dim);
+  letter-spacing: 0.05em;
+  animation: fadeSlideIn 0.6s ease 0.3s both;
 }
 
-/* ===== 動態星點背景 ===== */
-.stars {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
+.gameover-divider {
+  width: 80px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: fadeSlideIn 0.6s ease 0.5s both;
 }
 
-.star {
-  position: absolute;
-  background: white;
-  border-radius: 50%;
-  animation: twinkle var(--d) ease-in-out infinite alternate;
-}
-
-@keyframes twinkle {
-  from { opacity: 0.1; }
-  to { opacity: 0.8; }
+/* =====================================================
+   UTILITIES
+   ===================================================== */
+@media (max-width: 480px) {
+  .menu-panel { padding: 28px 28px; min-width: 280px; }
+  .game-title { font-size: 2rem; }
+  .hud-hint   { display: none; }
 }
