@@ -7,14 +7,11 @@
   <meta name="description" content="即時多人塔防佔領對戰 — 2到4人聯機，搶佔所有塔即獲勝！">
   <meta name="theme-color" content="#070b14">
   <link rel="stylesheet" href="style.css">
-
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
 
-<!-- Nebula + Stars background -->
 <div class="nebula"></div>
 <div class="stars" id="starsContainer"></div>
 
@@ -24,7 +21,6 @@
     <div class="game-title">Tower Wars</div>
     <div class="game-subtitle">即時塔防佔領對戰</div>
   </div>
-
   <div class="menu-panel">
     <div class="menu-label">選擇人數</div>
     <div class="player-count-selector">
@@ -36,19 +32,16 @@
     </div>
     <button class="btn-primary" id="startMatchBtn">▶ 開始配對</button>
   </div>
-
   <div class="menu-hint">
     拖曳你的塔 → 派遣士兵攻佔目標<br>
-    搶佔所有塔即獲勝利
+    每局可使用技能各一次 · 搶佔所有塔獲勝
   </div>
 </div>
 
 <!-- ===== 匹配中 ===== -->
 <div id="matchmakingScreen" class="hidden">
   <div class="match-title">⚡ 配對中</div>
-  <div class="spinner-wrap">
-    <div class="spinner-inner"></div>
-  </div>
+  <div class="spinner-wrap"><div class="spinner-inner"></div></div>
   <div class="match-info">
     <div id="matchPlayerCount">等待玩家加入...</div>
     <div id="matchStatus">搜尋中...</div>
@@ -72,7 +65,22 @@
       <span class="hud-label">兵</span>
       <span class="hud-value" id="mySoldierCount">0</span>
     </div>
-    <div class="hud-hint">拖曳你的塔來派遣士兵</div>
+
+    <!-- Skills in HUD -->
+    <div class="hud-skills">
+      <button class="skill-btn" id="skillNapalmBtn">
+        <span class="skill-icon">🔥</span>
+        <span class="skill-name">燃燒彈</span>
+        <span class="skill-cd" id="skillNapalmCd">就緒</span>
+      </button>
+      <button class="skill-btn" id="skillDefectBtn">
+        <span class="skill-icon">🌀</span>
+        <span class="skill-name">策反</span>
+        <span class="skill-cd" id="skillDefectCd">就緒</span>
+      </button>
+    </div>
+
+    <div class="hud-hint">拖曳塔來派兵</div>
   </div>
   <div id="gameContainer">
     <canvas id="gameCanvas"></canvas>
@@ -87,27 +95,15 @@
   <button class="btn-primary" id="backToMenuBtn">返回主選單</button>
 </div>
 
-<!-- Firebase 設定 -->
 <script src="firebase-config.js"></script>
-<!-- 遊戲邏輯 -->
 <script src="game.js"></script>
-
 <script>
-  // 生成星點背景
   const container = document.getElementById('starsContainer');
-  const starCount  = window.innerWidth < 600 ? 50 : 100;
-  for (let i = 0; i < starCount; i++) {
-    const s    = document.createElement('div');
-    s.className = 'star';
-    const size  = Math.random() * 1.8 + 0.6;
-    s.style.cssText = `
-      left: ${Math.random()*100}%;
-      top:  ${Math.random()*100}%;
-      width:  ${size}px;
-      height: ${size}px;
-      --d: ${2.5 + Math.random()*4}s;
-      animation-delay: ${Math.random()*4}s;
-    `;
+  const starCount = window.innerWidth < 600 ? 50 : 100;
+  for (let i=0;i<starCount;i++) {
+    const s=document.createElement('div'); s.className='star';
+    const size=Math.random()*1.8+0.6;
+    s.style.cssText=`left:${Math.random()*100}%;top:${Math.random()*100}%;width:${size}px;height:${size}px;--d:${2.5+Math.random()*4}s;animation-delay:${Math.random()*4}s;`;
     container.appendChild(s);
   }
 </script>
