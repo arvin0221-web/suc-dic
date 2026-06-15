@@ -82,6 +82,8 @@ function canvasToMap(cx,cy){ return { x:cx*MAP_W/canvas.width, y:cy*MAP_H/canvas
 
 // ===== TROOP SELECT =====
 function openTroopSelect() {
+  // Snapshot player count before switching screen (the select is on menuScreen)
+  gs._pendingPlayerCount = parseInt(document.getElementById('playerCountSelect').value);
   showScreen('troopSelectScreen');
   renderTroopCards();
 }
@@ -120,7 +122,8 @@ function confirmTroopAndMatch() {
 
 // ===== MATCHMAKING =====
 async function startMatchmaking() {
-  const count = parseInt(document.getElementById('playerCountSelect').value);
+  // Use count saved when user left the menu screen (select is now hidden)
+  const count = gs._pendingPlayerCount || parseInt(document.getElementById('playerCountSelect').value) || 2;
   gs.playerCount = count;
   gs.playerId = 'p_' + Math.random().toString(36).substr(2,9);
   document.getElementById('matchStatus').textContent = '搜尋中...';
@@ -869,25 +872,32 @@ function drawTowers() {
       ctx.beginPath();ctx.arc(0,0,r+10,0,Math.PI*2);ctx.stroke();ctx.restore();
     }
 
-    // Soldier count
-    ctx.save();ctx.fillStyle='#fff';
-    ctx.font=`bold ${Math.round(12*canvas.width/700+2)}px 'Courier New',monospace`;
+    // Soldier count (inside hex)
+    ctx.save();
+    ctx.fillStyle='#fff';
+    ctx.font=`bold 14px 'Courier New',monospace`;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.shadowBlur=5;ctx.shadowColor='#000';
-    ctx.fillText(Math.floor(tower.soldiers),tx,ty);ctx.shadowBlur=0;ctx.restore();
+    ctx.fillText(Math.floor(tower.soldiers),tx,ty+2);
+    ctx.shadowBlur=0;ctx.restore();
 
-    // Troop icon above tower
+    // Troop icon — drawn above the hex, big and clear
     const troop=TROOPS[tower.troop]||TROOPS.warrior;
-    ctx.save();ctx.font=`${Math.round(12*canvas.width/700+2)}px sans-serif`;
-    ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(troop.icon,tx,ty-r-10);ctx.restore();
+    ctx.save();
+    ctx.font=`18px sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='bottom';
+    ctx.shadowBlur=6;ctx.shadowColor='rgba(0,0,0,0.9)';
+    ctx.fillText(troop.icon, tx, ty - r + 2);
+    ctx.shadowBlur=0;ctx.restore();
 
-    // Owner dot (small, below icon)
-    if (tower.owner>=0) {
-      ctx.save();ctx.font=`${Math.round(8*canvas.width/700+1)}px sans-serif`;
-      ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(PLAYER_EMOJIS[tower.owner],tx,ty-r-24);ctx.restore();
-    }
+    // Troop label text below icon
+    ctx.save();
+    ctx.fillStyle= tower.owner>=0 ? PLAYER_COLORS[tower.owner] : '#aabbcc';
+    ctx.font=`bold 9px 'Share Tech Mono',monospace`;
+    ctx.textAlign='center';ctx.textBaseline='top';
+    ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.9)';
+    ctx.fillText(troop.label, tx, ty - r + 4);
+    ctx.shadowBlur=0;ctx.restore();
   }
 }
 
@@ -933,10 +943,21 @@ function drawSoldiers() {
     ctx.fillStyle=col;ctx.fill();ctx.shadowBlur=0;
     ctx.strokeStyle='#ffffffbb';ctx.lineWidth=1.5;ctx.stroke();ctx.restore();
 
-    // Troop icon inside blob
-    ctx.save();ctx.font=`${blobR*0.9}px sans-serif`;
+    // Count label
+    ctx.save();
+    ctx.fillStyle='#fff';ctx.font=`bold 9px monospace`;
     ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(troop.icon,x,y);ctx.restore();
+    ctx.shadowBlur=3;ctx.shadowColor='#000';
+    ctx.fillText(sg.count,x,y+1);
+    ctx.shadowBlur=0;ctx.restore();
+
+    // Troop icon floating above blob
+    ctx.save();
+    ctx.font=`14px sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='bottom';
+    ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.9)';
+    ctx.fillText(troop.icon, x, y - blobR + 2);
+    ctx.shadowBlur=0;ctx.restore();
   }
 }
 
