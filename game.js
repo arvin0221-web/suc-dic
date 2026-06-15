@@ -6,7 +6,7 @@
 
 const SOLDIER_GROWTH_INTERVAL = 600;
 const SOLDIER_GROWTH_AMOUNT   = 1;
-const BASE_MOVE_SPEED         = 150;
+const BASE_MOVE_SPEED = 200;  // map-px/s (was 150; 200 feels snappier)
 const DRAG_RATIO              = 0.5;
 const TOWER_RADIUS            = 30;
 const MAP_W = 900, MAP_H = 600;
@@ -17,10 +17,10 @@ const ARCHER_TICK_MS   = 5000;
 const ARCHER_DMG       = 0.1;
 
 const TROOPS = {
-  cavalry:  { speed:3.0,  pathPow:1.0, defPow:1.0, label:'騎兵', icon:'🐴' },
+  cavalry:  { speed:2.5,  pathPow:1.0, defPow:1.0, label:'騎兵', icon:'🐴' },
   warrior:  { speed:1.0,  pathPow:1.5, defPow:1.0, label:'戰士', icon:'⚔️'  },
   shielder: { speed:1.0,  pathPow:1.0, defPow:1.5, label:'盾兵', icon:'🛡️'  },
-  heavy:    { speed:0.25, pathPow:2.0, defPow:1.0, label:'重甲', icon:'🪖'  },
+  heavy:    { speed:0.45, pathPow:2.0, defPow:1.0, label:'重甲', icon:'🪖'  },
   archer:   { speed:1.0,  pathPow:1.0, defPow:1.0, label:'弓手', icon:'🏹'  },
 };
 const TROOP_KEYS = Object.keys(TROOPS);
@@ -235,6 +235,7 @@ function setupFirebase(roomId) {
     const ev=snap.val(); if(!ev) return;
     if (ev.type==='napalm') handleNapalmEvent(ev);
     else if (ev.type==='defect') handleDefectEvent(ev);
+    else if (ev.type==='arrow') handleArrowEvent(ev);
   });
   dbListeners.push(()=>skillRef.off());
 
@@ -264,37 +265,51 @@ function startGrowth(roomId) {
 }
 
 // ===== ARCHER TICK =====
-// FIX: correct distance calculation using proper intermediate position
 function startArcherTick(roomId) {
   archerInterval=setInterval(async ()=>{
     if (gs.phase!=='playing') return;
-    for (const sg of gs.soldiers) {
-      if (sg.ownerIndex!==gs.playerIndex) continue;
+    for (const sg of [...gs.soldiers]) {
+      // Only handle squads owned by this client (or AI squads if we are host)
+      const isOurs   = sg.ownerIndex===gs.playerIndex;
+      const isAIHost = lobby?.isHost && gs._aiIndexes?.has(sg.ownerIndex);
+      if (!isOurs && !isAIHost) continue;
       if ((sg.troop||'warrior')!=='archer') continue;
 
-      // Current position of this squad on the map
-      const curX = sg.fromX + (sg.toX - sg.fromX) * sg.progress;  // FIX: brackets fixed
+      const curX = sg.fromX + (sg.toX - sg.fromX) * sg.progress;
       const curY = sg.fromY + (sg.toY - sg.fromY) * sg.progress;
 
-      // Find nearest ENEMY tower
+      // Find nearest enemy tower
       let nearest=null, nearestD=Infinity;
       for (const t of Object.values(gs.towers)) {
-        if (t.owner===gs.playerIndex||t.owner<0) continue;
-        const d=Math.hypot(t.x - curX, t.y - curY);  // FIX: correct subtraction
+        if (t.owner===sg.ownerIndex||t.owner<0) continue;
+        const d=Math.hypot(t.x-curX, t.y-curY);
         if (d<nearestD){ nearest=t; nearestD=d; }
       }
       if (!nearest) continue;
 
+      // Apply damage via transaction
+      let hit=false;
       try {
-        await db.ref(`games/${roomId}/towers/${nearest.id}`).transaction(tower=>{
+        const res=await db.ref(`games/${roomId}/towers/${nearest.id}`).transaction(tower=>{
           if (!tower) return tower;
           tower.soldiers=Math.max(0,(tower.soldiers||0)-ARCHER_DMG);
           return tower;
         });
-        const from=mapToCanvas(curX,curY);
-        const to=mapToCanvas(nearest.x,nearest.y);
-        spawnArrowParticle(from.x,from.y,to.x,to.y,PLAYER_COLORS[gs.playerIndex]);
-      } catch(e){}
+        if (res.committed) hit=true;
+      } catch(e){ continue; }
+
+      if (!hit) continue;
+
+      // Broadcast arrow visual event to ALL clients via Firebase
+      const evId='arrow_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
+      const ev={
+        id:evId, type:'arrow',
+        ownerIndex:sg.ownerIndex,
+        fromX:curX, fromY:curY,
+        toX:nearest.x, toY:nearest.y,
+        at:Date.now(),
+      };
+      try{ db.ref(`games/${roomId}/skillEvents/${evId}`).set(ev); }catch(e){}
     }
   },ARCHER_TICK_MS);
 }
@@ -690,6 +705,32 @@ function handleDefectEvent(ev) {
   if (gs.towers[ev.towerId]) gs.towers[ev.towerId].owner=newOwner;
 }
 
+// ── Arrow visual event (broadcast to all clients) ──
+function handleArrowEvent(ev) {
+  const col  = PLAYER_COLORS[ev.ownerIndex];
+  const from = mapToCanvas(ev.fromX, ev.fromY);
+  const to   = mapToCanvas(ev.toX,   ev.toY);
+
+  // Spawn the animated arrow projectile
+  gs.arrowParticles.push({
+    x0:from.x, y0:from.y,
+    x1:to.x,   y1:to.y,
+    color: col,
+    t: 0,
+    alpha: 1,
+  });
+
+  // Muzzle flash at archer position
+  spawnArcherMuzzle(from.x, from.y, col);
+
+  // Schedule impact effect for when arrow arrives (~travel time based on distance)
+  const dist = Math.hypot(to.x-from.x, to.y-from.y);
+  const travelMs = Math.max(300, dist * 2.5); // roughly proportional
+  setTimeout(() => {
+    spawnArrowImpact(to.x, to.y, col);
+  }, travelMs);
+}
+
 function updateSkillUI() {
   const nb=document.getElementById('skillNapalmBtn');
   const un=gs.skills.napalm.used;
@@ -741,8 +782,14 @@ function update(dt) {
   for (const sw of gs.shockwaves){sw.r+=dt*380;sw.life=Math.max(0,1-sw.r/sw.maxR);}
   gs.shockwaves=gs.shockwaves.filter(sw=>sw.life>0);
 
-  for (const ap of gs.arrowParticles){ap.t+=dt*2.2;ap.alpha=Math.max(0,1-ap.t);}
-  gs.arrowParticles=gs.arrowParticles.filter(ap=>ap.alpha>0);
+  for (const ap of gs.arrowParticles){
+    // Speed: travel full distance in proportion to actual screen distance
+    const dist = Math.hypot(ap.x1-ap.x0, ap.y1-ap.y0);
+    const speed = 600; // px/s on canvas
+    ap.t += dt * speed / Math.max(1, dist);
+    ap.alpha = Math.max(0, 1 - Math.max(0, ap.t-0.85)/0.15);
+  }
+  gs.arrowParticles=gs.arrowParticles.filter(ap=>ap.t<1.05);
 
   if (gs.screenShake>0) gs.screenShake=Math.max(0,gs.screenShake-dt*55);
   updateHUD();
@@ -938,16 +985,55 @@ function drawSoldiers() {
 
 function drawArrows() {
   for(const ap of gs.arrowParticles){
-    const px=ap.x0+(ap.x1-ap.x0)*Math.min(ap.t,1);
-    const py=ap.y0+(ap.y1-ap.y0)*Math.min(ap.t,1);
-    // Streak
-    const sx=ap.x0+(ap.x1-ap.x0)*Math.max(0,ap.t-0.15);
-    const sy=ap.y0+(ap.y1-ap.y0)*Math.max(0,ap.t-0.15);
-    ctx.save();ctx.globalAlpha=ap.alpha*0.9;
-    ctx.strokeStyle=ap.color;ctx.lineWidth=2;
-    ctx.shadowBlur=6;ctx.shadowColor=ap.color;
-    ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(px,py);ctx.stroke();
-    ctx.shadowBlur=0;ctx.restore();
+    const t = Math.min(ap.t, 1);
+    // Current tip position
+    const px = ap.x0 + (ap.x1-ap.x0)*t;
+    const py = ap.y0 + (ap.y1-ap.y0)*t;
+    // Tail (slightly behind)
+    const tailT = Math.max(0, t-0.18);
+    const tx2 = ap.x0 + (ap.x1-ap.x0)*tailT;
+    const ty2 = ap.y0 + (ap.y1-ap.y0)*tailT;
+
+    const angle = Math.atan2(ap.y1-ap.y0, ap.x1-ap.x0);
+
+    ctx.save();
+    ctx.globalAlpha = ap.alpha * 0.95;
+    ctx.shadowBlur  = 8;
+    ctx.shadowColor = ap.color;
+
+    // Shaft
+    ctx.strokeStyle = ap.color;
+    ctx.lineWidth   = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(tx2, ty2);
+    ctx.lineTo(px, py);
+    ctx.stroke();
+
+    // Arrowhead triangle
+    ctx.fillStyle = ap.color;
+    ctx.beginPath();
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    ctx.moveTo(8, 0);
+    ctx.lineTo(-4, -3.5);
+    ctx.lineTo(-4,  3.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Feathers at tail
+    ctx.strokeStyle = '#ffffffcc';
+    ctx.lineWidth   = 1.2;
+    ctx.save();
+    ctx.translate(tx2, ty2);
+    ctx.rotate(angle);
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-7,-4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-7, 4); ctx.stroke();
+    ctx.restore();
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 }
 
@@ -1048,8 +1134,44 @@ function spawnClashParticles(x,y,colA,colB){
   }
   gs.shockwaves.push({x,y,r:0,maxR:80,life:1,color:'#ffffff',width:2});
 }
-function spawnArrowParticle(x0,y0,x1,y1,color){
-  gs.arrowParticles.push({x0,y0,x1,y1,color,t:0,alpha:1});
+// Muzzle flash when archer fires
+function spawnArcherMuzzle(x, y, color) {
+  // Small starburst at archer position
+  for(let i=0;i<12;i++){
+    const a=(Math.PI*2/12)*i;
+    const spd=30+Math.random()*60;
+    const life=0.25+Math.random()*0.2;
+    gs.particles.push({
+      x, y,
+      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
+      color, maxLife:life, life,
+      maxR:2+Math.random()*2, r:2, alpha:1,
+      type:'normal', gravity:0, drag:0.92,
+    });
+  }
+  // Bright flash ring
+  gs.shockwaves.push({ x, y, r:0, maxR:22, life:1, color, width:2 });
+}
+
+// Impact when arrow hits target tower
+function spawnArrowImpact(x, y, color) {
+  // Sparks spray outward
+  for(let i=0;i<18;i++){
+    const a=Math.random()*Math.PI*2;
+    const spd=50+Math.random()*120;
+    const life=0.3+Math.random()*0.35;
+    gs.particles.push({
+      x, y,
+      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd-40,
+      color: i%3===0 ? '#ffdd59' : color,
+      maxLife:life, life,
+      maxR:2.5+Math.random()*2.5, r:3, alpha:1,
+      type:'normal', gravity:180, drag:0.97,
+    });
+  }
+  // Small shockwave ring at impact
+  gs.shockwaves.push({ x, y, r:0, maxR:35, life:1, color, width:1.5 });
+  gs.screenShake = Math.max(gs.screenShake, 2);
 }
 function spawnNapalmExplosion(x,y){
   const fireC=['#ff4757','#ff6348','#ff7f50','#ffa502','#ffdd59','#fff3cd'];
