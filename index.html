@@ -14,25 +14,86 @@
 <div class="stars" id="starsContainer"></div>
 
 <!-- ===== 主選單 ===== -->
-<div id="menuScreen">
+<div id="menuScreen" class="hidden">
   <div>
     <div class="game-title">Tower Wars</div>
     <div class="game-subtitle">即時塔防佔領對戰</div>
   </div>
   <div class="menu-panel">
-    <div class="menu-label">選擇人數</div>
-    <div class="player-count-selector">
-      <select id="playerCountSelect">
-        <option value="2">⚔️ 2 人對戰</option>
-        <option value="3">⚔️ 3 人混戰</option>
-        <option value="4">⚔️ 4 人混戰</option>
-      </select>
-    </div>
-    <button class="btn-primary" id="startMatchBtn">▶ 選擇兵種 &amp; 開始</button>
+    <button class="btn-primary" id="enterLobbyBtn">▶ 進入大廳</button>
   </div>
   <div class="menu-hint">
     拖曳你的塔 → 派遣士兵攻佔目標<br>
     路上相遇會對戰 · 每局技能各一次 · 搶佔所有塔獲勝
+  </div>
+</div>
+
+<!-- ===== 大廳列表 ===== -->
+<div id="lobbyListScreen" class="hidden">
+  <div class="lobby-header">
+    <div class="game-title-sm">Tower Wars</div>
+    <div class="lobby-subtitle">選擇房間或建立新房間</div>
+  </div>
+
+  <div class="lobby-body">
+    <!-- 建立房間 -->
+    <div class="lobby-section">
+      <div class="lobby-section-title">建立房間</div>
+      <div class="lobby-create-row">
+        <input class="lobby-input" id="newRoomNameInput" placeholder="輸入房間名稱（最多20字）" maxlength="20">
+        <button class="btn-primary btn-sm-h" id="createRoomBtn">建立</button>
+      </div>
+    </div>
+
+    <!-- 輸入房號加入 -->
+    <div class="lobby-section">
+      <div class="lobby-section-title">加入房間</div>
+      <div class="lobby-create-row">
+        <input class="lobby-input" id="joinRoomCodeInput" placeholder="輸入房間名稱直接加入">
+        <button class="btn-primary btn-sm-h" id="joinRoomByCodeBtn">加入</button>
+      </div>
+    </div>
+
+    <!-- 房間列表 -->
+    <div class="lobby-section lobby-section-list">
+      <div class="lobby-section-title">開放房間 <span class="lobby-refresh-hint">（即時更新）</span></div>
+      <div class="room-list" id="roomListContainer">
+        <div class="room-empty">載入中...</div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-secondary lobby-back-btn" id="lobbyBackBtn">← 返回主選單</button>
+</div>
+
+<!-- ===== 房間等待室 ===== -->
+<div id="lobbyRoomScreen" class="hidden">
+  <div class="room-header">
+    <div class="room-title" id="roomScreenTitle">房間</div>
+    <div class="room-timer" id="roomTimer">房間將在 2:00 後自動解散</div>
+  </div>
+
+  <div class="room-body">
+    <!-- 玩家列表 -->
+    <div class="room-panel">
+      <div class="room-panel-title">玩家列表</div>
+      <div id="roomPlayerList" class="room-player-list"></div>
+    </div>
+
+    <!-- 房主控制 -->
+    <div class="room-panel" id="hostControls">
+      <div class="room-panel-title">房主控制</div>
+      <div class="host-actions">
+        <button class="btn-ai" id="addAiBtn">＋ 加入 AI 敵人</button>
+        <button class="btn-danger-outline" id="dissolveRoomBtn">解散房間</button>
+      </div>
+      <button class="btn-primary btn-start" id="startGameBtn" disabled>▶ 開始遊戲 (0人)</button>
+    </div>
+  </div>
+
+  <div class="room-footer">
+    <button class="btn-secondary" id="changeTroopBtn">⚔️ 選擇兵種</button>
+    <button class="btn-secondary" id="leaveRoomBtn">← 離開房間</button>
   </div>
 </div>
 
@@ -43,19 +104,8 @@
   <div class="troop-grid" id="troopGrid"></div>
   <div class="troop-actions">
     <button class="btn-secondary" id="troopBackBtn">← 返回</button>
-    <button class="btn-primary"   id="troopConfirmBtn">確認並配對 →</button>
+    <button class="btn-primary"   id="troopConfirmBtn">確認 →</button>
   </div>
-</div>
-
-<!-- ===== 匹配中 ===== -->
-<div id="matchmakingScreen" class="hidden">
-  <div class="match-title">⚡ 配對中</div>
-  <div class="spinner-wrap"><div class="spinner-inner"></div></div>
-  <div class="match-info">
-    <div id="matchPlayerCount">等待玩家加入...</div>
-    <div id="matchStatus">搜尋中...</div>
-  </div>
-  <button class="btn-secondary" id="cancelMatchBtn">取消配對</button>
 </div>
 
 <!-- ===== 遊戲畫面 ===== -->
@@ -92,12 +142,14 @@
   <div id="gameoverTitle">🏆 勝利！</div>
   <div class="gameover-divider"></div>
   <div id="winnerText"></div>
-  <button class="btn-primary" id="backToMenuBtn">返回主選單</button>
+  <button class="btn-primary" id="backToMenuBtn">返回大廳</button>
 </div>
 
 <script src="firebase-config.js"></script>
 <script src="game.js"></script>
+<script src="lobby.js"></script>
 <script>
+  // Stars
   const container=document.getElementById('starsContainer');
   for(let i=0;i<(window.innerWidth<600?50:100);i++){
     const s=document.createElement('div');s.className='star';

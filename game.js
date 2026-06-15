@@ -71,24 +71,33 @@ function resizeCanvas() {
 }
 
 // ===== SCREENS =====
+// showLobbyScreen is defined in lobby.js and handles all screen switching.
+// This alias keeps internal game.js calls working.
 function showScreen(id) {
-  ['menuScreen','troopSelectScreen','matchmakingScreen','gameScreen','gameoverScreen']
-    .forEach(s => document.getElementById(s).classList.add('hidden'));
-  document.getElementById(id).classList.remove('hidden');
+  ['menuScreen','lobbyListScreen','lobbyRoomScreen',
+   'troopSelectScreen','matchmakingScreen','gameScreen','gameoverScreen']
+    .forEach(s => {
+      const el = document.getElementById(s);
+      if (el) el.classList.add('hidden');
+    });
+  const target = document.getElementById(id);
+  if (target) target.classList.remove('hidden');
 }
 
 // ===== COORDS =====
 function mapToCanvas(mx,my){ return { x:mx*canvas.width/MAP_W, y:my*canvas.height/MAP_H }; }
 function canvasToMap(cx,cy){ return { x:cx*MAP_W/canvas.width, y:cy*MAP_H/canvas.height }; }
 
-// ===== TROOP SELECT =====
+// ===== TROOP SELECT (called from lobby) =====
 function openTroopSelect() {
-  gs._pendingPlayerCount = parseInt(document.getElementById('playerCountSelect').value) || 2;
-  showScreen('troopSelectScreen');
-  renderTroopCards();
+  // Delegate to lobby's version which knows where to return
+  if (typeof openTroopSelectFromLobby === 'function') {
+    openTroopSelectFromLobby();
+  }
 }
 function renderTroopCards() {
   const grid = document.getElementById('troopGrid');
+  if (!grid) return;
   grid.innerHTML = '';
   for (const [key, t] of Object.entries(TROOPS)) {
     const btn = document.createElement('button');
@@ -112,85 +121,6 @@ function troopDesc(key) {
   if (key==='heavy')    lines.push('路途戰力 ×2');
   if (key==='archer')   lines.push('每5秒遠程 0.1傷');
   return lines.join(' · ') || '標準兵種';
-}
-function confirmTroopAndMatch() {
-  showScreen('matchmakingScreen');
-  startMatchmaking();
-}
-
-// ===== MATCHMAKING =====
-async function startMatchmaking() {
-  const count = gs._pendingPlayerCount || 2;
-  gs.playerCount = count;
-  gs.playerId = 'p_' + Math.random().toString(36).substr(2,9);
-  document.getElementById('matchStatus').textContent = '搜尋中...';
-  document.getElementById('matchPlayerCount').textContent = `等待 ${count} 人遊戲`;
-
-  const snap = await db.ref('waiting').once('value');
-  const waiting = snap.val() || {};
-  let targetRoom = null;
-  for (const [rid, room] of Object.entries(waiting)) {
-    if (room.playerCount===count && Object.keys(room.players||{}).length<count) {
-      targetRoom=rid; break;
-    }
-  }
-  if (!targetRoom)
-    targetRoom = 'room_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
-
-  gs.roomId = targetRoom;
-  const roomRef = db.ref(`waiting/${targetRoom}`);
-  await roomRef.child('players/'+gs.playerId).set({
-    id:gs.playerId, joinedAt:Date.now(), troop:gs.selectedTroop
-  });
-  await roomRef.update({ playerCount:count });
-  db.ref(`waiting/${targetRoom}/players/${gs.playerId}`).onDisconnect().remove();
-
-  const statusRef = db.ref(`games/${targetRoom}/status`);
-  const statusUnsub = statusRef.on('value', snap => {
-    if (snap.val()==='playing') {
-      statusRef.off('value',statusUnsub);
-      db.ref(`games/${targetRoom}`).once('value').then(snap => {
-        const data = snap.val();
-        const sorted = Object.values(data.players).sort((a,b)=>a.joinedAt-b.joinedAt);
-        gs.playerIndex = sorted.findIndex(p=>p.id===gs.playerId);
-        startGame(targetRoom, data.towers, data.startTime);
-      });
-    }
-  });
-  dbListeners.push(()=>statusRef.off('value',statusUnsub));
-
-  const waitUnsub = roomRef.on('value', async snap => {
-    const room = snap.val(); if (!room) return;
-    const players = Object.values(room.players||{});
-    const cur=players.length, need=room.playerCount;
-    document.getElementById('matchStatus').textContent=`已找到 ${cur} / ${need} 位玩家`;
-    if (cur>=need) {
-      roomRef.off('value',waitUnsub);
-      const sorted=players.sort((a,b)=>a.joinedAt-b.joinedAt);
-      if (sorted[0].id===gs.playerId) await initAsHost(targetRoom,sorted);
-    }
-  });
-}
-
-async function initAsHost(roomId, players) {
-  const startTime = Date.now();
-  const towers = generateTowers(players.length, players);
-  const gameData = {
-    status:'playing', startTime, playerCount:players.length,
-    players: players.reduce((acc,p,i)=>{
-      acc[p.id]={ id:p.id, index:i, joinedAt:p.joinedAt, troop:p.troop||'warrior' };
-      return acc;
-    },{}),
-    towers,
-  };
-  await db.ref(`games/${roomId}`).set(gameData);
-  await db.ref(`waiting/${roomId}`).remove();
-}
-
-function cancelMatchmaking() {
-  if (gs.roomId) db.ref(`waiting/${gs.roomId}/players/${gs.playerId}`).remove();
-  dbListeners.forEach(fn=>fn()); dbListeners=[];
-  gs=freshState(); showScreen('menuScreen');
 }
 
 // ===== MAP GENERATION =====
@@ -1147,15 +1077,34 @@ function spawnDefectSpiral(x,y,color){
   }
 }
 
+
 // ===== BOOT =====
 window.addEventListener('load',()=>{
   initCanvas();
-  showScreen('menuScreen');
-  document.getElementById('startMatchBtn').addEventListener('click',openTroopSelect);
-  document.getElementById('troopConfirmBtn').addEventListener('click',confirmTroopAndMatch);
-  document.getElementById('troopBackBtn').addEventListener('click',()=>{gs=freshState();showScreen('menuScreen');});
-  document.getElementById('cancelMatchBtn').addEventListener('click',cancelMatchmaking);
-  document.getElementById('backToMenuBtn').addEventListener('click',returnToMenu);
-  document.getElementById('skillNapalmBtn').addEventListener('click',()=>selectSkill('napalm'));
-  document.getElementById('skillDefectBtn').addEventListener('click',()=>selectSkill('defect'));
+
+  // Lobby list screen
+  document.getElementById('enterLobbyBtn')?.addEventListener('click', openLobby);
+  document.getElementById('createRoomBtn')?.addEventListener('click', createRoom);
+  document.getElementById('joinRoomByCodeBtn')?.addEventListener('click', joinRoomByCode);
+  document.getElementById('lobbyBackBtn')?.addEventListener('click', ()=>{
+    if(lobby.roomListUnsub){lobby.roomListUnsub();lobby.roomListUnsub=null;}
+    showLobbyScreen('menuScreen');
+  });
+
+  // Room screen
+  document.getElementById('startGameBtn')?.addEventListener('click', startGameFromRoom);
+  document.getElementById('addAiBtn')?.addEventListener('click', addAI);
+  document.getElementById('dissolveRoomBtn')?.addEventListener('click', async()=>{
+    if(confirm('確定要解散房間嗎？')){ await dissolveRoom(); returnToLobby(); }
+  });
+  document.getElementById('leaveRoomBtn')?.addEventListener('click', ()=>leaveRoom());
+  document.getElementById('changeTroopBtn')?.addEventListener('click', openTroopSelectFromLobby);
+
+  // In-game
+  document.getElementById('skillNapalmBtn')?.addEventListener('click',()=>selectSkill('napalm'));
+  document.getElementById('skillDefectBtn')?.addEventListener('click',()=>selectSkill('defect'));
+  document.getElementById('backToMenuBtn')?.addEventListener('click', returnToLobby);
+
+  // Start at menu (lobby.js openLobby called on enterLobbyBtn click)
+  showLobbyScreen('menuScreen');
 });
