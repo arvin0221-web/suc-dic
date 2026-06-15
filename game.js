@@ -1,13 +1,12 @@
 // ============================================================
-// Tower Wars — v5
-// NEW: Troop types, mid-path combat, archer tick, troop selection
-// FIX: Defect locked for first 30s, enemy soldier animations
+// Tower Wars — v6
+// FIX: archer distance calc, defence formula, napalm cancels
+//      arrival timers, mid-path survivor properly continues
 // ============================================================
 
-// ===== CONSTANTS =====
 const SOLDIER_GROWTH_INTERVAL = 600;
 const SOLDIER_GROWTH_AMOUNT   = 1;
-const BASE_MOVE_SPEED         = 150;  // map-px/s
+const BASE_MOVE_SPEED         = 150;
 const DRAG_RATIO              = 0.5;
 const TOWER_RADIUS            = 30;
 const MAP_W = 900, MAP_H = 600;
@@ -17,17 +16,14 @@ const DEFECT_LOCK_SECS = 30;
 const ARCHER_TICK_MS   = 5000;
 const ARCHER_DMG       = 0.1;
 
-// ===== TROOP TYPES =====
-// speed multiplier, pathPower (mid-fight), defencePower, label, icon, color tint
 const TROOPS = {
-  cavalry:  { speed:3.0,  pathPow:1.0, defPow:1.0, label:'騎兵', icon:'🐴', tint:'#ffe066' },
-  warrior:  { speed:1.0,  pathPow:1.5, defPow:1.0, label:'戰士', icon:'⚔️',  tint:'#ff8c42' },
-  shielder: { speed:1.0,  pathPow:1.0, defPow:1.5, label:'盾兵', icon:'🛡️',  tint:'#4fc3f7' },
-  heavy:    { speed:0.25, pathPow:2.0, defPow:1.0, label:'重甲', icon:'🪖',  tint:'#b0bec5' },
-  archer:   { speed:1.0,  pathPow:1.0, defPow:1.0, label:'弓手', icon:'🏹',  tint:'#a5d6a7' },
+  cavalry:  { speed:3.0,  pathPow:1.0, defPow:1.0, label:'騎兵', icon:'🐴' },
+  warrior:  { speed:1.0,  pathPow:1.5, defPow:1.0, label:'戰士', icon:'⚔️'  },
+  shielder: { speed:1.0,  pathPow:1.0, defPow:1.5, label:'盾兵', icon:'🛡️'  },
+  heavy:    { speed:0.25, pathPow:2.0, defPow:1.0, label:'重甲', icon:'🪖'  },
+  archer:   { speed:1.0,  pathPow:1.0, defPow:1.0, label:'弓手', icon:'🏹'  },
 };
 const TROOP_KEYS = Object.keys(TROOPS);
-const NEUTRAL_TROOPS = TROOP_KEYS; // neutral towers pick randomly
 
 const PLAYER_COLORS = ['#ff4757','#2f86ff','#2ed573','#ffa502'];
 const PLAYER_NAMES  = ['紅','藍','綠','橙'];
@@ -35,22 +31,27 @@ const PLAYER_EMOJIS = ['🔴','🔵','🟢','🟠'];
 const NEUTRAL_COLOR = '#8899aa';
 
 // ===== STATE =====
+// cancelledSoldiers: Set of soldier IDs whose arrival should be no-op
 let gs = freshState();
 function freshState() {
   return {
-    phase: 'menu',               // menu | troopSelect | matchmaking | playing | gameover
-    selectedTroop: 'warrior',    // chosen before match
+    phase: 'menu',
+    selectedTroop: 'warrior',
     roomId: null, playerId: null,
     playerIndex: null, playerCount: 2,
     gameStartAt: 0,
     towers: {}, soldiers: [],
-    combatEvents: new Set(),     // ids of mid-path combats already processed
-    archerTimers: [],
+    cancelledSoldiers: new Set(),  // FIX: napalm / combat cancellation
+    combatKeys: new Set(),
     dragFrom: null, dragPos: null,
     skillMode: null,
-    particles: [], shockwaves: [], fireSweep: null, defectFlash: null,
+    particles: [], shockwaves: [],
+    arrowParticles: [],
+    fireSweep: null, defectFlash: null,
     screenShake: 0, winner: null,
     skills: { napalm:{ used:false }, defect:{ used:false } },
+    _pendingPlayerCount: 2,
+    _lastSkillUIUpdate: 0,
   };
 }
 
@@ -82,8 +83,7 @@ function canvasToMap(cx,cy){ return { x:cx*MAP_W/canvas.width, y:cy*MAP_H/canvas
 
 // ===== TROOP SELECT =====
 function openTroopSelect() {
-  // Snapshot player count before switching screen (the select is on menuScreen)
-  gs._pendingPlayerCount = parseInt(document.getElementById('playerCountSelect').value);
+  gs._pendingPlayerCount = parseInt(document.getElementById('playerCountSelect').value) || 2;
   showScreen('troopSelectScreen');
   renderTroopCards();
 }
@@ -93,8 +93,7 @@ function renderTroopCards() {
   for (const [key, t] of Object.entries(TROOPS)) {
     const btn = document.createElement('button');
     btn.className = 'troop-card' + (gs.selectedTroop===key?' selected':'');
-    btn.innerHTML = `
-      <div class="troop-icon">${t.icon}</div>
+    btn.innerHTML = `<div class="troop-icon">${t.icon}</div>
       <div class="troop-name">${t.label}</div>
       <div class="troop-stats">${troopDesc(key)}</div>`;
     btn.onclick = () => {
@@ -106,9 +105,8 @@ function renderTroopCards() {
   }
 }
 function troopDesc(key) {
-  const t = TROOPS[key];
   const lines = [];
-  if (t.speed !== 1)  lines.push(`移速 ×${t.speed}`);
+  if (TROOPS[key].speed!==1)  lines.push(`移速 ×${TROOPS[key].speed}`);
   if (key==='warrior')  lines.push('路途戰力 ×1.5');
   if (key==='shielder') lines.push('防禦戰力 ×1.5');
   if (key==='heavy')    lines.push('路途戰力 ×2');
@@ -122,8 +120,7 @@ function confirmTroopAndMatch() {
 
 // ===== MATCHMAKING =====
 async function startMatchmaking() {
-  // Use count saved when user left the menu screen (select is now hidden)
-  const count = gs._pendingPlayerCount || parseInt(document.getElementById('playerCountSelect').value) || 2;
+  const count = gs._pendingPlayerCount || 2;
   gs.playerCount = count;
   gs.playerId = 'p_' + Math.random().toString(36).substr(2,9);
   document.getElementById('matchStatus').textContent = '搜尋中...';
@@ -196,7 +193,7 @@ function cancelMatchmaking() {
   gs=freshState(); showScreen('menuScreen');
 }
 
-// ===== TOWER GENERATION =====
+// ===== MAP GENERATION =====
 function generateTowers(playerCount, players) {
   const towers={}, positions=[];
   const MIN_DIST=120;
@@ -206,20 +203,20 @@ function generateTowers(playerCount, players) {
     {x:MAP_W-MAP_PADDING-40,y:MAP_PADDING+40},
     {x:MAP_PADDING+40,y:MAP_H-MAP_PADDING-40},
   ];
-  const sorted = players.slice().sort((a,b)=>a.joinedAt-b.joinedAt);
+  const sorted=players.slice().sort((a,b)=>a.joinedAt-b.joinedAt);
   for (let i=0;i<playerCount;i++) {
-    const troop = sorted[i]?.troop || 'warrior';
+    const troop=sorted[i]?.troop||'warrior';
     positions.push(corners[i]);
     towers[`tp${i}`]={ id:`tp${i}`, x:corners[i].x, y:corners[i].y, soldiers:15, owner:i, troop };
   }
-  const neutralCount = MIN_NEUTRAL+Math.floor(Math.random()*(MAX_NEUTRAL-MIN_NEUTRAL+1));
+  const neutralCount=MIN_NEUTRAL+Math.floor(Math.random()*(MAX_NEUTRAL-MIN_NEUTRAL+1));
   let placed=0,fails=0;
-  while (placed<neutralCount && fails<20) {
+  while (placed<neutralCount&&fails<20) {
     const x=MAP_PADDING+Math.random()*(MAP_W-MAP_PADDING*2);
     const y=MAP_PADDING+Math.random()*(MAP_H-MAP_PADDING*2);
     if (positions.every(p=>Math.hypot(p.x-x,p.y-y)>=MIN_DIST)) {
       positions.push({x,y});
-      const troop = NEUTRAL_TROOPS[Math.floor(Math.random()*NEUTRAL_TROOPS.length)];
+      const troop=TROOP_KEYS[Math.floor(Math.random()*TROOP_KEYS.length)];
       towers[`tn${placed}`]={
         id:`tn${placed}`, x:Math.round(x), y:Math.round(y),
         soldiers:5+Math.floor(Math.random()*10), owner:-1, troop
@@ -233,11 +230,12 @@ function generateTowers(playerCount, players) {
 // ===== START GAME =====
 function startGame(roomId, towersData, startTime) {
   gs.phase='playing'; gs.roomId=roomId;
-  gs.gameStartAt = startTime || Date.now();
+  gs.gameStartAt=startTime||Date.now();
   gs.towers=JSON.parse(JSON.stringify(towersData));
-  gs.soldiers=[]; gs.particles=[]; gs.shockwaves=[];
+  gs.soldiers=[]; gs.particles=[]; gs.shockwaves=[]; gs.arrowParticles=[];
   gs.fireSweep=null; gs.defectFlash=null;
-  gs.combatEvents=new Set();
+  gs.cancelledSoldiers=new Set(); gs.combatKeys=new Set();
+  arrivedSoldiers.clear();
   showScreen('gameScreen'); resizeCanvas();
   document.getElementById('myColorDot').style.background=PLAYER_COLORS[gs.playerIndex];
   document.getElementById('myColorLabel').textContent=PLAYER_NAMES[gs.playerIndex]+'方';
@@ -248,42 +246,56 @@ function startGame(roomId, towersData, startTime) {
 
 // ===== FIREBASE =====
 function setupFirebase(roomId) {
-  const towersRef = db.ref(`games/${roomId}/towers`);
-  towersRef.on('value', snap=>{ const d=snap.val(); if(d) gs.towers=d; });
+  const towersRef=db.ref(`games/${roomId}/towers`);
+  towersRef.on('value',snap=>{ const d=snap.val(); if(d) gs.towers=d; });
   dbListeners.push(()=>towersRef.off());
 
-  const solRef = db.ref(`games/${roomId}/movingSoldiers`);
-  solRef.on('child_added', snap=>{
+  // All clients animate all soldiers.
+  // Every player schedules handleArrival for soldiers THEY own.
+  // arrivedSoldiers Set ensures the transaction only fires once even if both
+  // the local setTimeout and a Firebase-triggered path somehow overlap.
+  const solRef=db.ref(`games/${roomId}/movingSoldiers`);
+  solRef.on('child_added',snap=>{
     const sg=snap.val();
-    if (!sg || gs.soldiers.find(s=>s.id===sg.id)) return;
+    if (!sg||gs.soldiers.find(s=>s.id===sg.id)) return;
+    gs.cancelledSoldiers.delete(sg.id);
     const elapsed=Date.now()-sg.sentAt;
-    if (elapsed>=sg.travelTime) return;
+    const remaining=sg.travelTime-elapsed;
+    if (remaining<=0) return; // already should have landed, skip
     gs.soldiers.push({...sg, progress:Math.min(elapsed/sg.travelTime,0.99)});
+    // Schedule arrival for our own soldiers (covers survivors spawned by combat writer)
+    if (sg.ownerIndex===gs.playerIndex) {
+      setTimeout(()=>handleArrival(sg), Math.max(0,remaining));
+    }
   });
-  solRef.on('child_removed', snap=>{
+  solRef.on('child_removed',snap=>{
     const sg=snap.val();
-    if (sg) gs.soldiers=gs.soldiers.filter(s=>s.id!==sg.id);
+    if (sg) {
+      // Only remove from animation list.
+      // Do NOT add to cancelledSoldiers here — that would suppress arrival for the sender
+      // when Firebase fires child_removed after the sender calls .remove() post-arrival.
+      // cancelledSoldiers is only populated by explicit cancellations (napalm, combat).
+      gs.soldiers=gs.soldiers.filter(s=>s.id!==sg.id);
+    }
   });
   dbListeners.push(()=>solRef.off());
 
-  // Mid-path combat events
-  const combatRef = db.ref(`games/${roomId}/combatEvents`);
-  combatRef.on('child_added', snap=>{
-    const ev=snap.val(); if(!ev) return;
-    handleCombatEvent(ev);
-  });
+  // Mid-path combat
+  const combatRef=db.ref(`games/${roomId}/combatEvents`);
+  combatRef.on('child_added',snap=>{ const ev=snap.val(); if(ev) handleCombatEvent(ev); });
   dbListeners.push(()=>combatRef.off());
 
-  const skillRef = db.ref(`games/${roomId}/skillEvents`);
-  skillRef.on('child_added', snap=>{
+  // Skill events
+  const skillRef=db.ref(`games/${roomId}/skillEvents`);
+  skillRef.on('child_added',snap=>{
     const ev=snap.val(); if(!ev) return;
     if (ev.type==='napalm') handleNapalmEvent(ev);
     else if (ev.type==='defect') handleDefectEvent(ev);
   });
   dbListeners.push(()=>skillRef.off());
 
-  const statusRef = db.ref(`games/${roomId}/status`);
-  statusRef.on('value', snap=>{
+  const statusRef=db.ref(`games/${roomId}/status`);
+  statusRef.on('value',snap=>{
     if (snap.val()==='gameover')
       db.ref(`games/${roomId}/winner`).once('value').then(w=>endGame(w.val()));
   });
@@ -292,7 +304,7 @@ function setupFirebase(roomId) {
 
 // ===== GROWTH =====
 function startGrowth(roomId) {
-  growthInterval = setInterval(async ()=>{
+  growthInterval=setInterval(async ()=>{
     if (gs.phase!=='playing') return;
     const updates={};
     for (const [tid,t] of Object.entries(gs.towers)) {
@@ -300,51 +312,53 @@ function startGrowth(roomId) {
         updates[`games/${roomId}/towers/${tid}/soldiers`]=(t.soldiers||0)+SOLDIER_GROWTH_AMOUNT;
     }
     if (Object.keys(updates).length) try{ await db.ref().update(updates); }catch(e){}
-  }, SOLDIER_GROWTH_INTERVAL);
+  },SOLDIER_GROWTH_INTERVAL);
 }
 
 // ===== ARCHER TICK =====
-// Each player handles damage from their own archers only
+// FIX: correct distance calculation using proper intermediate position
 function startArcherTick(roomId) {
-  archerInterval = setInterval(async ()=>{
+  archerInterval=setInterval(async ()=>{
     if (gs.phase!=='playing') return;
     for (const sg of gs.soldiers) {
       if (sg.ownerIndex!==gs.playerIndex) continue;
-      if (gs.towers[sg.fromTowerId]?.troop!=='archer' && sg.troop!=='archer') continue;
-      // Find nearest enemy tower
+      if ((sg.troop||'warrior')!=='archer') continue;
+
+      // Current position of this squad on the map
+      const curX = sg.fromX + (sg.toX - sg.fromX) * sg.progress;  // FIX: brackets fixed
+      const curY = sg.fromY + (sg.toY - sg.fromY) * sg.progress;
+
+      // Find nearest ENEMY tower
       let nearest=null, nearestD=Infinity;
       for (const t of Object.values(gs.towers)) {
-        if (t.owner===gs.playerIndex || t.owner<0) continue;
-        const d=Math.hypot(t.x-sg.fromX+(sg.toX-sg.fromX)*sg.progress,
-                           t.y-sg.fromY+(sg.toY-sg.fromY)*sg.progress);
+        if (t.owner===gs.playerIndex||t.owner<0) continue;
+        const d=Math.hypot(t.x - curX, t.y - curY);  // FIX: correct subtraction
         if (d<nearestD){ nearest=t; nearestD=d; }
       }
       if (!nearest) continue;
+
       try {
         await db.ref(`games/${roomId}/towers/${nearest.id}`).transaction(tower=>{
           if (!tower) return tower;
           tower.soldiers=Math.max(0,(tower.soldiers||0)-ARCHER_DMG);
           return tower;
         });
-        // Arrow particle
-        const from=mapToCanvas(
-          sg.fromX+(sg.toX-sg.fromX)*sg.progress,
-          sg.fromY+(sg.toY-sg.fromY)*sg.progress);
+        const from=mapToCanvas(curX,curY);
         const to=mapToCanvas(nearest.x,nearest.y);
         spawnArrowParticle(from.x,from.y,to.x,to.y,PLAYER_COLORS[gs.playerIndex]);
       } catch(e){}
     }
-  }, ARCHER_TICK_MS);
+  },ARCHER_TICK_MS);
 }
 
 // ===== INPUT =====
 function setupInput() {
-  canvas.addEventListener('mousedown',  onDown, {passive:false});
-  canvas.addEventListener('mousemove',  onMove, {passive:false});
-  canvas.addEventListener('mouseup',    onUp,   {passive:false});
-  canvas.addEventListener('touchstart', onDown, {passive:false});
-  canvas.addEventListener('touchmove',  onMove, {passive:false});
-  canvas.addEventListener('touchend',   onUp,   {passive:false});
+  canvas.addEventListener('mousedown',  onDown,{passive:false});
+  canvas.addEventListener('mousemove',  onMove,{passive:false});
+  canvas.addEventListener('mouseup',    onUp,  {passive:false});
+  canvas.addEventListener('touchstart', onDown,{passive:false});
+  canvas.addEventListener('touchmove',  onMove,{passive:false});
+  canvas.addEventListener('touchend',   onUp,  {passive:false});
   canvas.addEventListener('mouseleave', onCancel);
 }
 function getPos(e) {
@@ -401,8 +415,7 @@ async function sendSoldiers(from, to) {
   try{ await db.ref(`games/${roomId}/towers/${from.id}/soldiers`).set(newSold); }catch(e){return;}
 
   const troop=live.troop||'warrior';
-  const troopData=TROOPS[troop];
-  const speed=BASE_MOVE_SPEED*troopData.speed;
+  const speed=BASE_MOVE_SPEED*TROOPS[troop].speed;
   const dist=Math.hypot(to.x-from.x,to.y-from.y);
   const travelTime=(dist/speed)*1000;
   const sentAt=Date.now();
@@ -417,159 +430,198 @@ async function sendSoldiers(from, to) {
   const fc=mapToCanvas(from.x,from.y);
   spawnLaunchParticles(fc.x,fc.y,PLAYER_COLORS[gs.playerIndex]);
   try{ await db.ref(`games/${roomId}/movingSoldiers/${sgId}`).set(sg); }catch(e){}
-  setTimeout(()=>handleArrival(sg), travelTime);
+  setTimeout(()=>handleArrival(sg),travelTime);
 }
 
 // ===== ARRIVAL =====
+// arrivedSoldiers: tracks soldiers that have already been processed,
+// preventing double-execution under high latency / Firebase retries.
+const arrivedSoldiers = new Set();
+
 async function handleArrival(sg) {
   if (gs.phase!=='playing') return;
+  if (gs.cancelledSoldiers.has(sg.id)) return;
+  if (arrivedSoldiers.has(sg.id)) return;
+  arrivedSoldiers.add(sg.id);
+
   const roomId=gs.roomId;
-  const destTower=gs.towers[sg.toTowerId];
-  const isFriendly=destTower&&destTower.owner===sg.ownerIndex;
-  const isDefending=destTower&&destTower.owner!==sg.ownerIndex&&destTower.owner>=0;
 
-  // Compute effective attack power (shielder bonus for defender)
-  const attackPow=sg.count;
-  let defenceBonus=1;
-  if (isDefending) {
-    const defTroop=destTower.troop||'warrior';
-    defenceBonus=TROOPS[defTroop].defPow;
-  }
-
-  try {
-    await db.ref(`games/${roomId}/towers/${sg.toTowerId}`).transaction(tower=>{
-      if (!tower) return tower;
-      if (tower.owner===sg.ownerIndex) {
-        tower.soldiers=(tower.soldiers||0)+sg.count;
-      } else {
-        const defSoldiers=(tower.soldiers||0)*defenceBonus;
-        const rem=defSoldiers-attackPow;
-        if (rem<=0) {
-          tower.soldiers=Math.ceil(Math.abs(rem)/defenceBonus);
-          tower.owner=sg.ownerIndex;
-          tower.troop=sg.troop; // conquering army brings their troop type
-        } else {
-          tower.soldiers=Math.ceil(rem/defenceBonus);
-        }
-      }
-      return tower;
-    });
-  } catch(e){}
-
+  // Visual feedback IMMEDIATELY — don't wait for Firebase round-trip
+  gs.soldiers=gs.soldiers.filter(s=>s.id!==sg.id);
   const cp=mapToCanvas(sg.toX,sg.toY);
   spawnImpactParticles(cp.x,cp.y,PLAYER_COLORS[sg.ownerIndex]);
   gs.screenShake=5;
-  gs.soldiers=gs.soldiers.filter(s=>s.id!==sg.id);
-  try{ await db.ref(`games/${roomId}/movingSoldiers/${sg.id}`).remove(); }catch(e){}
-  await checkWin();
+
+  // Firebase transaction with retry on transient failure
+  let success=false;
+  for (let attempt=0; attempt<3 && !success; attempt++) {
+    try {
+      const result = await db.ref(`games/${roomId}/towers/${sg.toTowerId}`).transaction(tower=>{
+        if (!tower) return tower;
+        if (tower.owner===sg.ownerIndex) {
+          tower.soldiers=(tower.soldiers||0)+sg.count;
+        } else if (tower.owner<0) {
+          const rem=(tower.soldiers||0)-sg.count;
+          if (rem<=0) {
+            tower.soldiers=Math.abs(rem);
+            tower.owner=sg.ownerIndex;
+            // tower.troop preserved (neutral tower keeps its own type)
+          } else {
+            tower.soldiers=rem;
+          }
+        } else {
+          const defPow=TROOPS[tower.troop||'warrior'].defPow;
+          const effectiveDef=(tower.soldiers||0)*defPow;
+          if (sg.count>=effectiveDef) {
+            tower.soldiers=Math.max(0,Math.floor(sg.count-effectiveDef));
+            tower.owner=sg.ownerIndex;
+            // tower.troop preserved (conquered tower keeps its own type)
+          } else {
+            tower.soldiers=Math.max(1,Math.floor(tower.soldiers-sg.count/defPow));
+          }
+        }
+        return tower;
+      });
+      if (result.committed) success=true;
+    } catch(e) {
+      if (attempt<2) await new Promise(r=>setTimeout(r,200*(attempt+1)));
+    }
+  }
+
+  // Remove from Firebase movingSoldiers (fire and forget)
+  db.ref(`games/${roomId}/movingSoldiers/${sg.id}`).remove().catch(()=>{});
+
+  if (success) await checkWin();
 }
 
 // ===== MID-PATH COMBAT =====
-// Called every frame to detect collisions between opposite-direction squads
 let lastCombatCheck=0;
 function checkMidPathCombat() {
   const now=Date.now();
-  if (now-lastCombatCheck < 200) return; // throttle
+  if (now-lastCombatCheck<200) return;
   lastCombatCheck=now;
-
   const soldiers=gs.soldiers;
   for (let i=0;i<soldiers.length;i++) {
     for (let j=i+1;j<soldiers.length;j++) {
-      const a=soldiers[i], b=soldiers[j];
+      const a=soldiers[i],b=soldiers[j];
       if (a.ownerIndex===b.ownerIndex) continue;
-      // Opposite path: a goes A→B, b goes B→A
-      if (!(a.fromTowerId===b.toTowerId && a.toTowerId===b.fromTowerId)) continue;
-      // Check if they have crossed (positions overlap on path)
-      if (a.progress+b.progress < 1.0) continue; // haven't met yet
-      // Already handled?
-      const combatKey = [a.id,b.id].sort().join('|');
-      if (gs.combatEvents.has(combatKey)) continue;
-      gs.combatEvents.add(combatKey);
-      // Only the owner of 'a' (lower ownerIndex) writes the combat event to avoid duplication
+      if (!(a.fromTowerId===b.toTowerId&&a.toTowerId===b.fromTowerId)) continue;
+      if (a.progress+b.progress<1.0) continue;
+      const combatKey=[a.id,b.id].sort().join('|');
+      if (gs.combatKeys.has(combatKey)) continue;
+      gs.combatKeys.add(combatKey);
+      // Only the player with lower index writes to Firebase
       if (gs.playerIndex===Math.min(a.ownerIndex,b.ownerIndex)) {
-        writeCombatEvent(a, b, combatKey);
+        writeCombatEvent(a,b,combatKey);
       }
     }
   }
 }
 
-async function writeCombatEvent(a, b, combatKey) {
+async function writeCombatEvent(a,b,combatKey) {
   const evId='cb_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
+  const posA={ x:a.fromX+(a.toX-a.fromX)*a.progress, y:a.fromY+(a.toY-a.fromY)*a.progress };
+  const posB={ x:b.fromX+(b.toX-b.fromX)*b.progress, y:b.fromY+(b.toY-b.fromY)*b.progress };
   const ev={
     id:evId, key:combatKey,
     sgA:{ id:a.id, count:a.count, ownerIndex:a.ownerIndex, troop:a.troop||'warrior',
-          x:a.fromX+(a.toX-a.fromX)*a.progress, y:a.fromY+(a.toY-a.fromY)*a.progress },
+          toTowerId:a.toTowerId, toX:a.toX, toY:a.toY, ...posA },
     sgB:{ id:b.id, count:b.count, ownerIndex:b.ownerIndex, troop:b.troop||'warrior',
-          x:b.fromX+(b.toX-b.fromX)*b.progress, y:b.fromY+(b.toY-b.fromY)*b.progress },
+          toTowerId:b.toTowerId, toX:b.toX, toY:b.toY, ...posB },
     at:Date.now(),
   };
   try{ await db.ref(`games/${gs.roomId}/combatEvents/${evId}`).set(ev); }catch(e){}
 }
 
+// FIX: handleCombatEvent — both soldiers removed from Firebase atomically,
+// survivor spawned as NEW soldier (different ID) so child_added works for all clients,
+// and cancelledSoldiers prevents old arrival timeouts from firing.
 function handleCombatEvent(ev) {
   const {sgA,sgB}=ev;
   const troopA=TROOPS[sgA.troop||'warrior'];
   const troopB=TROOPS[sgB.troop||'warrior'];
+
+  // Effective combat power
   const powA=sgA.count*troopA.pathPow;
   const powB=sgB.count*troopB.pathPow;
 
-  // Visual clash
+  // Visual clash at midpoint
   const mx=(sgA.x+sgB.x)/2, my=(sgA.y+sgB.y)/2;
   const {x:cx,y:cy}=mapToCanvas(mx,my);
   spawnClashParticles(cx,cy,PLAYER_COLORS[sgA.ownerIndex],PLAYER_COLORS[sgB.ownerIndex]);
   gs.screenShake=Math.max(gs.screenShake,4);
 
-  // Remove both soldiers from local animation immediately
+  // Cancel both soldiers locally + mark for arrival suppression
   gs.soldiers=gs.soldiers.filter(s=>s.id!==sgA.id&&s.id!==sgB.id);
+  gs.cancelledSoldiers.add(sgA.id);
+  gs.cancelledSoldiers.add(sgB.id);
 
-  // Survivor (only the caster writes to Firebase to avoid race)
+  // Only the writer resolves on Firebase
   if (gs.playerIndex===Math.min(sgA.ownerIndex,sgB.ownerIndex)) {
-    resolveCombatOnFirebase(ev, powA, powB, sgA, sgB);
+    resolveCombatOnFirebase(powA,powB,sgA,sgB);
   }
 }
 
-async function resolveCombatOnFirebase(ev, powA, powB, sgA, sgB) {
+async function resolveCombatOnFirebase(powA,powB,sgA,sgB) {
   const roomId=gs.roomId;
-  // Remove both from movingSoldiers
   const updates={};
+  // Delete both originals
   updates[`games/${roomId}/movingSoldiers/${sgA.id}`]=null;
   updates[`games/${roomId}/movingSoldiers/${sgB.id}`]=null;
 
-  if (Math.abs(powA-powB)<0.5) {
-    // Mutual annihilation
-  } else if (powA>powB) {
-    const surviving=Math.round(sgA.count-(powB/TROOPS[sgA.troop||'warrior'].pathPow));
-    if (surviving>0) {
-      const newSg={ ...sgA, id:'sg_'+Date.now()+'_'+Math.random().toString(36).substr(2,5),
-        count:surviving, sentAt:Date.now(),
-        fromX:sgA.x, fromY:sgA.y, progress:0,
-        travelTime:Math.hypot(sgA.toX-sgA.x,sgA.toY-sgA.y)/BASE_MOVE_SPEED/TROOPS[sgA.troop||'warrior'].speed*1000,
-      };
-      updates[`games/${roomId}/movingSoldiers/${newSg.id}`]=newSg;
-      gs.soldiers.push({...newSg});
-      setTimeout(()=>handleArrival(newSg),newSg.travelTime);
-    }
-  } else {
-    const surviving=Math.round(sgB.count-(powA/TROOPS[sgB.troop||'warrior'].pathPow));
-    if (surviving>0) {
-      const newSg={ ...sgB, id:'sg_'+Date.now()+'_'+Math.random().toString(36).substr(2,5),
-        count:surviving, sentAt:Date.now(),
-        fromX:sgB.x, fromY:sgB.y, progress:0,
-        travelTime:Math.hypot(sgB.toX-sgB.x,sgB.toY-sgB.y)/BASE_MOVE_SPEED/TROOPS[sgB.troop||'warrior'].speed*1000,
-      };
-      updates[`games/${roomId}/movingSoldiers/${newSg.id}`]=newSg;
-      gs.soldiers.push({...newSg});
-      setTimeout(()=>handleArrival(newSg),newSg.travelTime);
-    }
+  // Surviving count: winner's raw count minus how many the loser "killed"
+  // Loser kills = loser_effectivePow / winner_pathPow  (converted back to raw bodies)
+  let survivor=null;
+  if (powA>powB+0.4) {
+    const pathPowA=TROOPS[sgA.troop||'warrior'].pathPow;
+    const surviving=Math.round(sgA.count - powB/pathPowA);
+    if (surviving>0) survivor=makeSurvivorSoldier(sgA,surviving);
+  } else if (powB>powA+0.4) {
+    const pathPowB=TROOPS[sgB.troop||'warrior'].pathPow;
+    const surviving=Math.round(sgB.count - powA/pathPowB);
+    if (surviving>0) survivor=makeSurvivorSoldier(sgB,surviving);
   }
+  // powA ≈ powB → mutual annihilation, survivor stays null
+
+  if (survivor) {
+    updates[`games/${roomId}/movingSoldiers/${survivor.id}`]=survivor;
+    // Writer schedules arrival only if they own the survivor
+    if (survivor.ownerIndex===gs.playerIndex) {
+      gs.soldiers.push({...survivor});
+      setTimeout(()=>handleArrival(survivor),survivor.travelTime);
+    }
+    // All other clients pick it up via child_added
+  }
+
   try{ await db.ref().update(updates); }catch(e){}
+}
+
+// Create a new soldier object for the survivor continuing from the clash point.
+// fromTowerId set to '_clash_' so checkMidPathCombat won't re-match it as a reverse pair.
+function makeSurvivorSoldier(orig, count) {
+  const sentAt=Date.now();
+  const dist=Math.hypot(orig.toX-orig.x, orig.toY-orig.y);
+  const speed=BASE_MOVE_SPEED*TROOPS[orig.troop||'warrior'].speed;
+  const travelTime=Math.max(100,(dist/speed)*1000);
+  return {
+    id:'sg_'+sentAt+'_'+Math.random().toString(36).substr(2,5),
+    fromTowerId:'_clash_',   // prevents re-triggering mid-path combat
+    toTowerId:orig.toTowerId,
+    count,
+    ownerIndex:orig.ownerIndex,
+    fromX:orig.x, fromY:orig.y,
+    toX:orig.toX, toY:orig.toY,
+    sentAt, travelTime,
+    troop:orig.troop||'warrior',
+    progress:0,
+  };
 }
 
 // ===== WIN CHECK =====
 async function checkWin() {
   try {
     const snap=await db.ref(`games/${gs.roomId}/towers`).once('value');
-    const towers=snap.val(); if (!towers) return;
+    const towers=snap.val(); if(!towers) return;
     const owners=new Set(Object.values(towers).filter(t=>t.owner>=0).map(t=>t.owner));
     if (owners.size===1) {
       const winner=[...owners][0];
@@ -584,9 +636,8 @@ function endGame(winnerIdx) {
   cancelAnimationFrame(animId);
   dbListeners.forEach(fn=>fn()); dbListeners=[];
   const isWin=winnerIdx===gs.playerIndex;
-  const titleEl=document.getElementById('gameoverTitle');
-  titleEl.textContent=isWin?'🏆 勝利！':'💀 失敗';
-  titleEl.style.color=isWin?'#f1c40f':'#e74c3c';
+  document.getElementById('gameoverTitle').textContent=isWin?'🏆 勝利！':'💀 失敗';
+  document.getElementById('gameoverTitle').style.color=isWin?'#f1c40f':'#e74c3c';
   document.getElementById('winnerText').textContent=
     `${PLAYER_EMOJIS[winnerIdx]} ${PLAYER_NAMES[winnerIdx]}方 獲勝！`;
   showScreen('gameoverScreen');
@@ -604,7 +655,7 @@ function returnToMenu() {
 // ============================================================
 function defectLockRemaining() {
   if (!gs.gameStartAt) return DEFECT_LOCK_SECS*1000;
-  return Math.max(0, DEFECT_LOCK_SECS*1000-(Date.now()-gs.gameStartAt));
+  return Math.max(0,DEFECT_LOCK_SECS*1000-(Date.now()-gs.gameStartAt));
 }
 
 function selectSkill(skillKey) {
@@ -626,15 +677,20 @@ async function activateNapalm() {
   }); }catch(e){}
 }
 
+// FIX: handleNapalmEvent — cancel all enemy soldiers' arrival timers via cancelledSoldiers
 function handleNapalmEvent(ev) {
   const caster=ev.by;
   const toDestroy=gs.soldiers.filter(s=>s.ownerIndex!==caster);
+
   for (const sg of toDestroy) {
     const prog=Math.max(0,Math.min((Date.now()-sg.sentAt)/sg.travelTime,1));
-    const fx=sg.fromX+(sg.toX-sg.fromX)*prog, fy=sg.fromY+(sg.toY-sg.fromY)*prog;
+    const fx=sg.fromX+(sg.toX-sg.fromX)*prog;
+    const fy=sg.fromY+(sg.toY-sg.fromY)*prog;
     const cp=mapToCanvas(fx,fy);
     spawnNapalmExplosion(cp.x,cp.y);
+    gs.cancelledSoldiers.add(sg.id);  // FIX: suppress pending arrival timers
   }
+
   if (toDestroy.length>0) {
     gs.fireSweep={startAt:Date.now(),duration:1400};
     gs.screenShake=18;
@@ -643,7 +699,11 @@ function handleNapalmEvent(ev) {
       setTimeout(()=>spawnEmberCluster(cx,cy),Math.random()*800);
     }
   }
+
+  // Remove from local animation
   gs.soldiers=gs.soldiers.filter(s=>s.ownerIndex===caster);
+
+  // Caster deletes from Firebase (prevents other clients' child_added)
   if (ev.by===gs.playerIndex) {
     db.ref(`games/${gs.roomId}/movingSoldiers`).once('value').then(snap=>{
       const all=snap.val()||{}, updates={};
@@ -665,7 +725,7 @@ async function activateDefect(tower) {
 }
 
 function handleDefectEvent(ev) {
-  const tower=gs.towers[ev.towerId]; if (!tower) return;
+  const tower=gs.towers[ev.towerId]; if(!tower) return;
   const newOwner=ev.by;
   const cp=mapToCanvas(tower.x,tower.y);
   for (let i=0;i<4;i++) {
@@ -683,22 +743,21 @@ function handleDefectEvent(ev) {
 }
 
 function updateSkillUI() {
-  const now=Date.now();
   const nb=document.getElementById('skillNapalmBtn');
-  const used_n=gs.skills.napalm.used;
-  nb.disabled=used_n||gs.phase!=='playing';
+  const un=gs.skills.napalm.used;
+  nb.disabled=un||gs.phase!=='playing';
   nb.classList.toggle('skill-active',gs.skillMode==='napalm');
-  nb.classList.toggle('skill-used',used_n);
-  document.getElementById('skillNapalmCd').textContent=used_n?'已使用':'就緒';
+  nb.classList.toggle('skill-used',un);
+  document.getElementById('skillNapalmCd').textContent=un?'已使用':'就緒';
 
   const db2=document.getElementById('skillDefectBtn');
-  const used_d=gs.skills.defect.used;
+  const ud=gs.skills.defect.used;
   const lock=defectLockRemaining();
-  db2.disabled=used_d||lock>0||gs.phase!=='playing';
+  db2.disabled=ud||lock>0||gs.phase!=='playing';
   db2.classList.toggle('skill-active',gs.skillMode==='defect');
-  db2.classList.toggle('skill-used',used_d);
+  db2.classList.toggle('skill-used',ud);
   document.getElementById('skillDefectCd').textContent=
-    used_d?'已使用':lock>0?`${Math.ceil(lock/1000)}s`:'就緒';
+    ud?'已使用':lock>0?`${Math.ceil(lock/1000)}s`:'就緒';
 }
 
 // ============================================================
@@ -724,27 +783,22 @@ function update(dt) {
 
   for (const p of gs.particles) {
     p.x+=p.vx*dt; p.y+=p.vy*dt;
-    p.vy+=(p.gravity??150)*dt;
-    p.vx*=(p.drag??0.99);
+    p.vy+=(p.gravity??150)*dt; p.vx*=(p.drag??0.99);
     p.life-=dt;
     p.alpha=Math.max(0,p.life/p.maxLife);
     p.r=p.maxR*(p.type==='ember'?1:p.alpha);
   }
   gs.particles=gs.particles.filter(p=>p.life>0);
 
-  for (const sw of gs.shockwaves) { sw.r+=dt*380; sw.life=Math.max(0,1-sw.r/sw.maxR); }
+  for (const sw of gs.shockwaves){sw.r+=dt*380;sw.life=Math.max(0,1-sw.r/sw.maxR);}
   gs.shockwaves=gs.shockwaves.filter(sw=>sw.life>0);
 
-  // Arrow particles (straight line, fast)
-  for (const ap of (gs.arrowParticles||[])) { ap.t+=dt*2.5; ap.alpha=Math.max(0,1-ap.t); }
-  if (gs.arrowParticles) gs.arrowParticles=gs.arrowParticles.filter(ap=>ap.alpha>0);
+  for (const ap of gs.arrowParticles){ap.t+=dt*2.2;ap.alpha=Math.max(0,1-ap.t);}
+  gs.arrowParticles=gs.arrowParticles.filter(ap=>ap.alpha>0);
 
   if (gs.screenShake>0) gs.screenShake=Math.max(0,gs.screenShake-dt*55);
   updateHUD();
-  // Skill UI update every ~500ms to avoid DOM spam
-  if (!gs._lastSkillUIUpdate||now-gs._lastSkillUIUpdate>300) {
-    updateSkillUI(); gs._lastSkillUIUpdate=now;
-  }
+  if (now-gs._lastSkillUIUpdate>300){updateSkillUI();gs._lastSkillUIUpdate=now;}
 }
 
 function updateHUD() {
@@ -761,7 +815,8 @@ function updateHUD() {
 // ============================================================
 function draw() {
   ctx.save();
-  if (gs.screenShake>0) ctx.translate((Math.random()-.5)*gs.screenShake*2,(Math.random()-.5)*gs.screenShake*2);
+  if (gs.screenShake>0)
+    ctx.translate((Math.random()-.5)*gs.screenShake*2,(Math.random()-.5)*gs.screenShake*2);
   drawBackground();
   drawFireSweepUnderlay();
   drawConnections();
@@ -777,18 +832,17 @@ function draw() {
 }
 
 function drawBackground() {
-  ctx.fillStyle='#070b14';
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#070b14'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.save(); ctx.strokeStyle='rgba(100,150,255,0.04)'; ctx.lineWidth=1;
-  for (let x=0;x<canvas.width;x+=55){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
-  for (let y=0;y<canvas.height;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
+  for(let x=0;x<canvas.width;x+=55){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
+  for(let y=0;y<canvas.height;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
   ctx.restore();
 }
 
 function drawFireSweepUnderlay() {
-  if (!gs.fireSweep) return;
+  if(!gs.fireSweep)return;
   const t=Math.min((Date.now()-gs.fireSweep.startAt)/gs.fireSweep.duration,1);
-  if (t>=1){gs.fireSweep=null;return;}
+  if(t>=1){gs.fireSweep=null;return;}
   const intensity=t<0.15?t/0.15:1-(t-0.15)/0.85;
   ctx.save();
   const grd=ctx.createRadialGradient(canvas.width/2,canvas.height/2,0,canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height));
@@ -800,11 +854,10 @@ function drawFireSweepUnderlay() {
 }
 
 function drawConnections() {
-  const towerArr=Object.values(gs.towers);
-  ctx.save(); ctx.lineWidth=0.5;
-  for (let i=0;i<towerArr.length;i++) for (let j=i+1;j<towerArr.length;j++) {
-    const a=towerArr[i],b=towerArr[j];
-    if (a.owner>=0&&a.owner===b.owner) {
+  const arr=Object.values(gs.towers); ctx.save(); ctx.lineWidth=0.5;
+  for(let i=0;i<arr.length;i++) for(let j=i+1;j<arr.length;j++){
+    const a=arr[i],b=arr[j];
+    if(a.owner>=0&&a.owner===b.owner){
       const pa=mapToCanvas(a.x,a.y),pb=mapToCanvas(b.x,b.y);
       ctx.strokeStyle=PLAYER_COLORS[a.owner]+'22';
       ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();
@@ -814,94 +867,79 @@ function drawConnections() {
 }
 
 function drawShockwaves() {
-  for (const sw of gs.shockwaves) {
-    ctx.save(); ctx.globalAlpha=sw.life*0.8; ctx.strokeStyle=sw.color;
-    ctx.lineWidth=sw.width*sw.life; ctx.shadowBlur=20; ctx.shadowColor=sw.color;
-    ctx.beginPath();ctx.arc(sw.x,sw.y,sw.r,0,Math.PI*2);ctx.stroke();
-    ctx.restore();
+  for(const sw of gs.shockwaves){
+    ctx.save();ctx.globalAlpha=sw.life*0.8;ctx.strokeStyle=sw.color;
+    ctx.lineWidth=sw.width*sw.life;ctx.shadowBlur=20;ctx.shadowColor=sw.color;
+    ctx.beginPath();ctx.arc(sw.x,sw.y,sw.r,0,Math.PI*2);ctx.stroke();ctx.restore();
   }
 }
 
 function drawTowers() {
   const now=Date.now()/1000;
   const isDefectMode=gs.skillMode==='defect';
-  for (const tower of Object.values(gs.towers)) {
+  for(const tower of Object.values(gs.towers)){
     const {x:tx,y:ty}=mapToCanvas(tower.x,tower.y);
     const r=TOWER_RADIUS;
     const col=tower.owner>=0?PLAYER_COLORS[tower.owner]:NEUTRAL_COLOR;
     const isMe=tower.owner===gs.playerIndex;
-    const isEnemyOwned=tower.owner>=0&&tower.owner!==gs.playerIndex;
+    const isEnemy=tower.owner>=0&&tower.owner!==gs.playerIndex;
 
     // Glow
-    if (tower.owner>=0) {
+    if(tower.owner>=0){
       const pulse=0.5+0.5*Math.sin(now*1.8+tower.x*0.01);
       const grd=ctx.createRadialGradient(tx,ty,r*0.3,tx,ty,r*(2.6+pulse*0.5));
       grd.addColorStop(0,col+'44');grd.addColorStop(1,'transparent');
       ctx.fillStyle=grd;ctx.beginPath();ctx.arc(tx,ty,r*3.2,0,Math.PI*2);ctx.fill();
     }
-
     // Defect target rings
-    if (isDefectMode&&isEnemyOwned&&defectLockRemaining()===0) {
-      for (let ri=0;ri<3;ri++) {
+    if(isDefectMode&&isEnemy&&defectLockRemaining()===0){
+      for(let ri=0;ri<3;ri++){
         const phase=((now*3+ri*0.4)%1);
         ctx.save();ctx.strokeStyle='#a78bfa';ctx.lineWidth=2.5-ri;
         ctx.globalAlpha=(1-phase)*0.7;ctx.shadowBlur=15;ctx.shadowColor='#a78bfa';
         ctx.beginPath();ctx.arc(tx,ty,r+8+phase*30,0,Math.PI*2);ctx.stroke();ctx.restore();
       }
     }
-
     // Shadow
     ctx.save();ctx.translate(tx,ty+4);ctx.globalAlpha=0.2;
     hexPath(ctx,0,0,r);ctx.fillStyle='#000';ctx.fill();ctx.restore();
-
     // Body
     ctx.save();ctx.translate(tx,ty);if(isMe)ctx.rotate(now*0.3);
     hexPath(ctx,0,0,r);
     const fg=ctx.createRadialGradient(0,-r*0.3,1,0,0,r);
-    if (tower.owner>=0){fg.addColorStop(0,col+'ee');fg.addColorStop(1,col+'66');}
+    if(tower.owner>=0){fg.addColorStop(0,col+'ee');fg.addColorStop(1,col+'66');}
     else{fg.addColorStop(0,'#334455ee');fg.addColorStop(1,'#22334488');}
     ctx.fillStyle=fg;ctx.fill();
     ctx.strokeStyle=col;ctx.lineWidth=isMe?3:1.5;
     if(isMe){ctx.shadowBlur=14;ctx.shadowColor=col;}
     ctx.stroke();ctx.shadowBlur=0;ctx.restore();
-
     // Drag ring
-    if (gs.dragFrom&&gs.dragFrom.id===tower.id) {
+    if(gs.dragFrom&&gs.dragFrom.id===tower.id){
       ctx.save();ctx.translate(tx,ty);ctx.strokeStyle=col;ctx.lineWidth=2.5;
       ctx.globalAlpha=0.5+0.5*Math.sin(now*8);
       ctx.beginPath();ctx.arc(0,0,r+10,0,Math.PI*2);ctx.stroke();ctx.restore();
     }
-
     // Soldier count (inside hex)
-    ctx.save();
-    ctx.fillStyle='#fff';
-    ctx.font=`bold 14px 'Courier New',monospace`;
+    ctx.save();ctx.fillStyle='#fff';ctx.font=`bold 14px 'Courier New',monospace`;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.shadowBlur=5;ctx.shadowColor='#000';
-    ctx.fillText(Math.floor(tower.soldiers),tx,ty+2);
-    ctx.shadowBlur=0;ctx.restore();
-
-    // Troop icon — drawn above the hex, big and clear
-    const troop=TROOPS[tower.troop]||TROOPS.warrior;
-    ctx.save();
-    ctx.font=`18px sans-serif`;
+    ctx.fillText(Math.floor(tower.soldiers),tx,ty+2);ctx.shadowBlur=0;ctx.restore();
+    // Troop icon above hex
+    const troop=TROOPS[tower.troop||'warrior'];
+    ctx.save();ctx.font='18px sans-serif';
     ctx.textAlign='center';ctx.textBaseline='bottom';
     ctx.shadowBlur=6;ctx.shadowColor='rgba(0,0,0,0.9)';
-    ctx.fillText(troop.icon, tx, ty - r + 2);
-    ctx.shadowBlur=0;ctx.restore();
-
-    // Troop label text below icon
-    ctx.save();
-    ctx.fillStyle= tower.owner>=0 ? PLAYER_COLORS[tower.owner] : '#aabbcc';
+    ctx.fillText(troop.icon,tx,ty-r+2);ctx.shadowBlur=0;ctx.restore();
+    // Troop label
+    ctx.save();ctx.fillStyle=tower.owner>=0?PLAYER_COLORS[tower.owner]:'#aabbcc';
     ctx.font=`bold 9px 'Share Tech Mono',monospace`;
     ctx.textAlign='center';ctx.textBaseline='top';
     ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.9)';
-    ctx.fillText(troop.label, tx, ty - r + 4);
-    ctx.shadowBlur=0;ctx.restore();
+    ctx.fillText(troop.label,tx,ty-r+4);ctx.shadowBlur=0;ctx.restore();
   }
 }
 
-function hexPath(ctx,cx,cy,r) {
+function hexPath(ctx,cx,cy,r){
   ctx.beginPath();
   for(let i=0;i<6;i++){
     const a=(Math.PI/3)*i-Math.PI/6;
@@ -912,69 +950,61 @@ function hexPath(ctx,cx,cy,r) {
 
 function drawSoldiers() {
   const now=Date.now()/1000;
-  for (const sg of gs.soldiers) {
+  for(const sg of gs.soldiers){
     const fx=sg.fromX+(sg.toX-sg.fromX)*sg.progress;
     const fy=sg.fromY+(sg.toY-sg.fromY)*sg.progress;
     const {x,y}=mapToCanvas(fx,fy);
     const col=PLAYER_COLORS[sg.ownerIndex];
     const troop=TROOPS[sg.troop||'warrior'];
-
+    const blobR=sg.troop==='heavy'?15:sg.troop==='cavalry'?10:12;
     // Trail
     for(let i=1;i<=6;i++){
       const tp=Math.max(0,sg.progress-i*0.035);
-      const {x:trx,y:try_}=mapToCanvas(sg.fromX+(sg.toX-sg.fromX)*tp,sg.fromY+(sg.toY-sg.fromY)*tp);
+      const{x:trx,y:try_}=mapToCanvas(sg.fromX+(sg.toX-sg.fromX)*tp,sg.fromY+(sg.toY-sg.fromY)*tp);
       ctx.save();ctx.globalAlpha=(1-i/7)*0.28;
-      ctx.beginPath();ctx.arc(trx,try_,5-i*0.5,0,Math.PI*2);
-      ctx.fillStyle=col;ctx.fill();ctx.restore();
+      ctx.beginPath();ctx.arc(trx,try_,5-i*0.5,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.restore();
     }
-
     // Path line
     const fc=mapToCanvas(sg.fromX,sg.fromY),tc=mapToCanvas(sg.toX,sg.toY);
     ctx.save();ctx.strokeStyle=col+'22';ctx.lineWidth=1;ctx.setLineDash([4,6]);
     ctx.beginPath();ctx.moveTo(fc.x,fc.y);ctx.lineTo(tc.x,tc.y);ctx.stroke();
     ctx.setLineDash([]);ctx.restore();
-
-    // Blob — size varies by troop
-    const blobR = sg.troop==='heavy'?15:sg.troop==='cavalry'?10:12;
-    ctx.save();
-    ctx.shadowBlur=16;ctx.shadowColor=col;
+    // Blob
+    ctx.save();ctx.shadowBlur=16;ctx.shadowColor=col;
     const pulse=0.9+0.1*Math.sin(now*10+sg.sentAt*0.001);
     ctx.beginPath();ctx.arc(x,y,blobR*pulse,0,Math.PI*2);
     ctx.fillStyle=col;ctx.fill();ctx.shadowBlur=0;
     ctx.strokeStyle='#ffffffbb';ctx.lineWidth=1.5;ctx.stroke();ctx.restore();
-
-    // Count label
-    ctx.save();
-    ctx.fillStyle='#fff';ctx.font=`bold 9px monospace`;
+    // Count
+    ctx.save();ctx.fillStyle='#fff';ctx.font=`bold 9px monospace`;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.shadowBlur=3;ctx.shadowColor='#000';
-    ctx.fillText(sg.count,x,y+1);
-    ctx.shadowBlur=0;ctx.restore();
-
-    // Troop icon floating above blob
-    ctx.save();
-    ctx.font=`14px sans-serif`;
+    ctx.fillText(sg.count,x,y+1);ctx.shadowBlur=0;ctx.restore();
+    // Troop icon above blob
+    ctx.save();ctx.font='14px sans-serif';
     ctx.textAlign='center';ctx.textBaseline='bottom';
     ctx.shadowBlur=4;ctx.shadowColor='rgba(0,0,0,0.9)';
-    ctx.fillText(troop.icon, x, y - blobR + 2);
-    ctx.shadowBlur=0;ctx.restore();
+    ctx.fillText(troop.icon,x,y-blobR+2);ctx.shadowBlur=0;ctx.restore();
   }
 }
 
 function drawArrows() {
-  if (!gs.arrowParticles) return;
-  for (const ap of gs.arrowParticles) {
-    const px=ap.x0+(ap.x1-ap.x0)*ap.t;
-    const py=ap.y0+(ap.y1-ap.y0)*ap.t;
+  for(const ap of gs.arrowParticles){
+    const px=ap.x0+(ap.x1-ap.x0)*Math.min(ap.t,1);
+    const py=ap.y0+(ap.y1-ap.y0)*Math.min(ap.t,1);
+    // Streak
+    const sx=ap.x0+(ap.x1-ap.x0)*Math.max(0,ap.t-0.15);
+    const sy=ap.y0+(ap.y1-ap.y0)*Math.max(0,ap.t-0.15);
     ctx.save();ctx.globalAlpha=ap.alpha*0.9;
-    ctx.fillStyle=ap.color;ctx.shadowBlur=6;ctx.shadowColor=ap.color;
-    ctx.beginPath();ctx.arc(px,py,3,0,Math.PI*2);ctx.fill();
-    ctx.restore();
+    ctx.strokeStyle=ap.color;ctx.lineWidth=2;
+    ctx.shadowBlur=6;ctx.shadowColor=ap.color;
+    ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(px,py);ctx.stroke();
+    ctx.shadowBlur=0;ctx.restore();
   }
 }
 
 function drawDragLine() {
-  if (!gs.dragFrom||!gs.dragPos) return;
+  if(!gs.dragFrom||!gs.dragPos)return;
   const from=mapToCanvas(gs.dragFrom.x,gs.dragFrom.y);
   const to=gs.dragPos;
   const col=PLAYER_COLORS[gs.playerIndex];
@@ -991,7 +1021,7 @@ function drawDragLine() {
   ctx.lineTo(to.x-16*Math.cos(angle+0.4),to.y-16*Math.sin(angle+0.4));
   ctx.closePath();ctx.fill();ctx.shadowBlur=0;
   const live=gs.towers[gs.dragFrom.id];
-  if (live) {
+  if(live){
     const cnt=Math.max(1,Math.floor(live.soldiers*DRAG_RATIO));
     const troop=TROOPS[live.troop||'warrior'];
     ctx.fillStyle='#fff';ctx.font='bold 12px monospace';
@@ -1002,7 +1032,7 @@ function drawDragLine() {
 }
 
 function drawSkillOverlay() {
-  if (!gs.skillMode) return;
+  if(!gs.skillMode)return;
   const now=Date.now()/1000;
   const alpha=0.6+0.3*Math.sin(now*4);
   ctx.save();ctx.globalAlpha=alpha;
@@ -1015,9 +1045,9 @@ function drawSkillOverlay() {
 }
 
 function drawParticles() {
-  for (const p of gs.particles) {
+  for(const p of gs.particles){
     ctx.save();ctx.globalAlpha=p.alpha*0.92;
-    if (p.type==='ember') {
+    if(p.type==='ember'){
       ctx.save();const angle=Math.atan2(p.vy,p.vx);
       ctx.translate(p.x,p.y);ctx.rotate(angle);
       const grad=ctx.createLinearGradient(-p.r*2,0,p.r*0.5,0);
@@ -1033,12 +1063,13 @@ function drawParticles() {
 }
 
 function drawDefectFlash() {
-  if (!gs.defectFlash) return;
+  if(!gs.defectFlash)return;
   const t=Math.min((Date.now()-gs.defectFlash.startAt)/gs.defectFlash.duration,1);
-  if (t>=1){gs.defectFlash=null;return;}
+  if(t>=1){gs.defectFlash=null;return;}
   const intensity=t<0.1?t/0.1:1-(t-0.1)/0.9;
   ctx.save();
-  const grd=ctx.createRadialGradient(gs.defectFlash.x,gs.defectFlash.y,0,gs.defectFlash.x,gs.defectFlash.y,Math.max(canvas.width,canvas.height)*1.2);
+  const grd=ctx.createRadialGradient(gs.defectFlash.x,gs.defectFlash.y,0,
+    gs.defectFlash.x,gs.defectFlash.y,Math.max(canvas.width,canvas.height)*1.2);
   const c=gs.defectFlash.color;
   grd.addColorStop(0,c+Math.round(intensity*0.55*255).toString(16).padStart(2,'0'));
   grd.addColorStop(0.4,c+Math.round(intensity*0.2*255).toString(16).padStart(2,'0'));
@@ -1049,74 +1080,82 @@ function drawDefectFlash() {
 // ============================================================
 //  PARTICLES
 // ============================================================
-function spawnLaunchParticles(x,y,color) {
+function spawnLaunchParticles(x,y,color){
   for(let i=0;i<14;i++){
     const a=Math.random()*Math.PI*2,spd=50+Math.random()*120,life=0.3+Math.random()*0.4;
     gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-40,color,maxLife:life,life,maxR:2+Math.random()*3,r:3,alpha:1,type:'normal',gravity:120,drag:0.99});
   }
 }
-function spawnImpactParticles(x,y,color) {
+function spawnImpactParticles(x,y,color){
   for(let i=0;i<22;i++){
     const a=Math.random()*Math.PI*2,spd=80+Math.random()*160,life=0.35+Math.random()*0.45;
     gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-60,color,maxLife:life,life,maxR:3+Math.random()*4,r:4,alpha:1,type:'normal',gravity:180,drag:0.99});
   }
 }
-function spawnClashParticles(x,y,colA,colB) {
-  for(let i=0;i<30;i++){
-    const a=Math.random()*Math.PI*2,spd=80+Math.random()*180,life=0.4+Math.random()*0.5;
-    const col=i%2===0?colA:colB;
-    gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-80,color:col,maxLife:life,life,maxR:3+Math.random()*4,r:4,alpha:1,type:'normal',gravity:160,drag:0.98});
+function spawnClashParticles(x,y,colA,colB){
+  for(let i=0;i<35;i++){
+    const a=Math.random()*Math.PI*2,spd=80+Math.random()*200,life=0.4+Math.random()*0.5;
+    gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-80,
+      color:i%2===0?colA:colB,maxLife:life,life,maxR:3+Math.random()*4,r:4,alpha:1,type:'normal',gravity:160,drag:0.98});
   }
   gs.shockwaves.push({x,y,r:0,maxR:80,life:1,color:'#ffffff',width:2});
 }
-function spawnArrowParticle(x0,y0,x1,y1,color) {
-  if (!gs.arrowParticles) gs.arrowParticles=[];
+function spawnArrowParticle(x0,y0,x1,y1,color){
   gs.arrowParticles.push({x0,y0,x1,y1,color,t:0,alpha:1});
 }
-function spawnNapalmExplosion(x,y) {
+function spawnNapalmExplosion(x,y){
   const fireC=['#ff4757','#ff6348','#ff7f50','#ffa502','#ffdd59','#fff3cd'];
   for(let i=0;i<60;i++){
     const a=Math.random()*Math.PI*2,spd=100+Math.random()*280;
-    const col=fireC[Math.floor(Math.random()*fireC.length)],life=0.5+Math.random()*0.8;
-    gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-100,color:col,maxLife:life,life,maxR:6+Math.random()*8,r:8,alpha:1,type:'fire',gravity:60,drag:0.97});
+    gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-100,
+      color:fireC[Math.floor(Math.random()*fireC.length)],maxLife:0.5+Math.random()*0.8,life:0.5+Math.random()*0.8,
+      maxR:6+Math.random()*8,r:8,alpha:1,type:'fire',gravity:60,drag:0.97});
   }
   for(let i=0;i<20;i++){
-    const col=['#555','#444','#333'][i%3],life=0.8+Math.random()*0.8;
-    gs.particles.push({x:x+(Math.random()-.5)*30,y,vx:(Math.random()-.5)*40,vy:-60-Math.random()*80,color:col,maxLife:life,life,maxR:8+Math.random()*10,r:10,alpha:1,type:'fire',gravity:-5,drag:0.98});
+    gs.particles.push({x:x+(Math.random()-.5)*30,y,
+      vx:(Math.random()-.5)*40,vy:-60-Math.random()*80,
+      color:['#555','#444','#333'][i%3],maxLife:0.8+Math.random()*0.8,life:0.8+Math.random()*0.8,
+      maxR:8+Math.random()*10,r:10,alpha:1,type:'fire',gravity:-5,drag:0.98});
   }
 }
-function spawnEmberCluster(x,y) {
+function spawnEmberCluster(x,y){
   for(let i=0;i<8;i++){
     const life=0.6+Math.random()*0.7,a=Math.PI*0.5+Math.PI*(Math.random()-.5)*0.8;
-    gs.particles.push({x:x+(Math.random()-.5)*60,y,vx:Math.cos(a)*100*(Math.random()-.5)*2,vy:Math.sin(a)*(50+Math.random()*120),color:['#ff4757','#ff6348','#ffa502','#ffdd59'][Math.floor(Math.random()*4)],maxLife:life,life,maxR:2+Math.random()*3,r:3,alpha:1,type:'ember',gravity:80,drag:0.99});
+    gs.particles.push({x:x+(Math.random()-.5)*60,y,
+      vx:Math.cos(a)*100*(Math.random()-.5)*2,vy:Math.sin(a)*(50+Math.random()*120),
+      color:['#ff4757','#ff6348','#ffa502','#ffdd59'][Math.floor(Math.random()*4)],
+      maxLife:life,life,maxR:2+Math.random()*3,r:3,alpha:1,type:'ember',gravity:80,drag:0.99});
   }
 }
-function spawnDefectSpiral(x,y,color) {
-  const count=80;
-  for(let i=0;i<count;i++){
-    const t=i/count,angle=t*Math.PI*8,spd=80+Math.random()*200;
+function spawnDefectSpiral(x,y,color){
+  for(let i=0;i<80;i++){
+    const t=i/80,angle=t*Math.PI*8,spd=80+Math.random()*200;
     const outA=Math.atan2(Math.sin(angle)*(10+t*120),Math.cos(angle)*(10+t*120));
     const life=0.6+Math.random()*0.7,isWhite=i%5===0;
-    gs.particles.push({x:x+Math.cos(angle)*20,y:y+Math.sin(angle)*20,vx:Math.cos(outA)*spd,vy:Math.sin(outA)*spd,color:isWhite?'#ffffff':color,maxLife:life,life,maxR:isWhite?3:4+Math.random()*3,r:4,alpha:1,type:'spiral',gravity:-20,drag:0.95});
+    gs.particles.push({x:x+Math.cos(angle)*20,y:y+Math.sin(angle)*20,
+      vx:Math.cos(outA)*spd,vy:Math.sin(outA)*spd,
+      color:isWhite?'#ffffff':color,maxLife:life,life,
+      maxR:isWhite?3:4+Math.random()*3,r:4,alpha:1,type:'spiral',gravity:-20,drag:0.95});
   }
   for(let ring=0;ring<3;ring++){
     const rc=24+ring*12;
     for(let i=0;i<rc;i++){
       const a=(Math.PI*2/rc)*i,spd=120+ring*80,life=0.5+ring*0.15;
-      gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,color:ring===1?'#ffffff':color,maxLife:life,life,maxR:3+ring,r:3,alpha:1,type:'spiral',gravity:0,drag:0.93});
+      gs.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,
+        color:ring===1?'#ffffff':color,maxLife:life,life,maxR:3+ring,r:3,alpha:1,type:'spiral',gravity:0,drag:0.93});
     }
   }
 }
 
 // ===== BOOT =====
-window.addEventListener('load', ()=>{
+window.addEventListener('load',()=>{
   initCanvas();
   showScreen('menuScreen');
-  document.getElementById('startMatchBtn').addEventListener('click', openTroopSelect);
-  document.getElementById('troopConfirmBtn').addEventListener('click', confirmTroopAndMatch);
-  document.getElementById('troopBackBtn').addEventListener('click', ()=>{gs=freshState();showScreen('menuScreen');});
-  document.getElementById('cancelMatchBtn').addEventListener('click', cancelMatchmaking);
-  document.getElementById('backToMenuBtn').addEventListener('click', returnToMenu);
-  document.getElementById('skillNapalmBtn').addEventListener('click', ()=>selectSkill('napalm'));
-  document.getElementById('skillDefectBtn').addEventListener('click', ()=>selectSkill('defect'));
+  document.getElementById('startMatchBtn').addEventListener('click',openTroopSelect);
+  document.getElementById('troopConfirmBtn').addEventListener('click',confirmTroopAndMatch);
+  document.getElementById('troopBackBtn').addEventListener('click',()=>{gs=freshState();showScreen('menuScreen');});
+  document.getElementById('cancelMatchBtn').addEventListener('click',cancelMatchmaking);
+  document.getElementById('backToMenuBtn').addEventListener('click',returnToMenu);
+  document.getElementById('skillNapalmBtn').addEventListener('click',()=>selectSkill('napalm'));
+  document.getElementById('skillDefectBtn').addEventListener('click',()=>selectSkill('defect'));
 });
