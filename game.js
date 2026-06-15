@@ -41,8 +41,9 @@ function freshState() {
     playerIndex: null, playerCount: 2,
     gameStartAt: 0,
     towers: {}, soldiers: [],
-    cancelledSoldiers: new Set(),  // FIX: napalm / combat cancellation
+    cancelledSoldiers: new Set(),
     combatKeys: new Set(),
+    _aiIndexes: new Set(),
     dragFrom: null, dragPos: null,
     skillMode: null,
     particles: [], shockwaves: [],
@@ -158,7 +159,7 @@ function generateTowers(playerCount, players) {
 }
 
 // ===== START GAME =====
-function startGame(roomId, towersData, startTime) {
+function startGame(roomId, towersData, startTime, gameData) {
   gs.phase='playing'; gs.roomId=roomId;
   gs.gameStartAt=startTime||Date.now();
   gs.towers=JSON.parse(JSON.stringify(towersData));
@@ -166,6 +167,15 @@ function startGame(roomId, towersData, startTime) {
   gs.fireSweep=null; gs.defectFlash=null;
   gs.cancelledSoldiers=new Set(); gs.combatKeys=new Set();
   arrivedSoldiers.clear();
+
+  // Build set of AI player indexes so growth and arrival work for them (host only)
+  gs._aiIndexes = new Set();
+  if (gameData && gameData.players) {
+    for (const p of Object.values(gameData.players)) {
+      if (p.isAI) gs._aiIndexes.add(p.index);
+    }
+  }
+
   showScreen('gameScreen'); resizeCanvas();
   document.getElementById('myColorDot').style.background=PLAYER_COLORS[gs.playerIndex];
   document.getElementById('myColorLabel').textContent=PLAYER_NAMES[gs.playerIndex]+'方';
@@ -193,8 +203,12 @@ function setupFirebase(roomId) {
     const remaining=sg.travelTime-elapsed;
     if (remaining<=0) return; // already should have landed, skip
     gs.soldiers.push({...sg, progress:Math.min(elapsed/sg.travelTime,0.99)});
-    // Schedule arrival for our own soldiers (covers survivors spawned by combat writer)
-    if (sg.ownerIndex===gs.playerIndex) {
+    // Schedule arrival for:
+    // 1. Our own soldiers
+    // 2. AI soldiers when we are the host (AI has no client of its own)
+    const isOurs = sg.ownerIndex===gs.playerIndex;
+    const isAIAndHost = lobby?.isHost && gs._aiIndexes?.has(sg.ownerIndex);
+    if (isOurs || isAIAndHost) {
       setTimeout(()=>handleArrival(sg), Math.max(0,remaining));
     }
   });
@@ -233,12 +247,16 @@ function setupFirebase(roomId) {
 }
 
 // ===== GROWTH =====
+// Each player grows their own towers.
+// Host additionally grows all AI towers (since AI has no client of its own).
 function startGrowth(roomId) {
   growthInterval=setInterval(async ()=>{
     if (gs.phase!=='playing') return;
     const updates={};
     for (const [tid,t] of Object.entries(gs.towers)) {
-      if (t.owner===gs.playerIndex)
+      const isMine = t.owner === gs.playerIndex;
+      const isAI   = lobby?.isHost && t.owner >= 0 && gs._aiIndexes?.has(t.owner);
+      if (isMine || isAI)
         updates[`games/${roomId}/towers/${tid}/soldiers`]=(t.soldiers||0)+SOLDIER_GROWTH_AMOUNT;
     }
     if (Object.keys(updates).length) try{ await db.ref().update(updates); }catch(e){}

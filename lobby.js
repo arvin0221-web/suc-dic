@@ -183,7 +183,7 @@ function subscribeRoom(roomId) {
         gs.playerIndex = allPlayers.findIndex(p => p.id === lobby.playerId);
         gs.playerId = lobby.playerId;
         gs.roomId = roomId;
-        startGame(roomId, data.towers, data.startTime);
+        startGame(roomId, data.towers, data.startTime, data);
         // If host, run AI
         if (lobby.isHost && data.ais && data.ais.length>0) startAI(data);
       });
