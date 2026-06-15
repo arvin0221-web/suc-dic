@@ -135,3 +135,22 @@ body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monosp
   .skill-btn{padding:5px 7px}
   .hud-skills{gap:4px}
 }
+
+/* ===== TROOP SELECT ===== */
+#troopSelectScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100dvh;gap:20px;position:relative;z-index:1;padding:16px}
+.troop-title{font-family:'Orbitron',monospace;font-weight:700;font-size:clamp(1.4rem,3.5vw,2rem);color:#dde6f5;letter-spacing:.12em;text-align:center}
+.troop-subtitle{color:#5a7fa8;font-size:.75rem;letter-spacing:.08em;text-align:center;line-height:1.8;margin-top:-10px}
+
+.troop-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:100%;max-width:700px}
+@media(max-width:600px){.troop-grid{grid-template-columns:repeat(3,1fr)}}
+
+.troop-card{background:rgba(13,20,37,.85);border:1px solid rgba(47,134,255,.2);border-radius:14px;padding:14px 10px;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;align-items:center;gap:6px;font-family:'Share Tech Mono',monospace;color:#dde6f5;position:relative;overflow:hidden}
+.troop-card::before{content:'';position:absolute;inset:0;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.05),transparent);pointer-events:none}
+.troop-card:hover{border-color:rgba(47,134,255,.5);transform:translateY(-2px);box-shadow:0 8px 20px rgba(47,134,255,.2)}
+.troop-card.selected{border-color:#2f86ff;background:rgba(47,134,255,.12);box-shadow:0 0 20px rgba(47,134,255,.3)}
+.troop-card.selected::after{content:'✓';position:absolute;top:5px;right:8px;color:#2f86ff;font-size:.75rem;font-weight:bold}
+.troop-icon{font-size:1.8rem;line-height:1}
+.troop-name{font-size:.78rem;font-weight:bold;letter-spacing:.06em;color:#dde6f5}
+.troop-stats{font-size:.62rem;color:#5a7fa8;text-align:center;line-height:1.6;min-height:28px}
+
+.troop-actions{display:flex;gap:14px;margin-top:4px}

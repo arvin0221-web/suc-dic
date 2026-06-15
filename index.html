@@ -4,14 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Tower Wars 姑姑嘎嘎廉價塔防</title>
-  <meta name="description" content="即時多人塔防佔領對戰 — 2到4人聯機，搶佔所有塔即獲勝！">
   <meta name="theme-color" content="#070b14">
   <link rel="stylesheet" href="style.css">
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
-
 <div class="nebula"></div>
 <div class="stars" id="starsContainer"></div>
 
@@ -30,11 +28,22 @@
         <option value="4">⚔️ 4 人混戰</option>
       </select>
     </div>
-    <button class="btn-primary" id="startMatchBtn">▶ 開始配對</button>
+    <button class="btn-primary" id="startMatchBtn">▶ 選擇兵種 &amp; 開始</button>
   </div>
   <div class="menu-hint">
     拖曳你的塔 → 派遣士兵攻佔目標<br>
-    每局可使用技能各一次 · 搶佔所有塔獲勝
+    路上相遇會對戰 · 每局技能各一次 · 搶佔所有塔獲勝
+  </div>
+</div>
+
+<!-- ===== 兵種選擇 ===== -->
+<div id="troopSelectScreen" class="hidden">
+  <div class="troop-title">⚔️ 選擇你的兵種</div>
+  <div class="troop-subtitle">此兵種將成為你初始塔的兵種<br>中立塔兵種隨機分配</div>
+  <div class="troop-grid" id="troopGrid"></div>
+  <div class="troop-actions">
+    <button class="btn-secondary" id="troopBackBtn">← 返回</button>
+    <button class="btn-primary"   id="troopConfirmBtn">確認並配對 →</button>
   </div>
 </div>
 
@@ -57,16 +66,8 @@
       <span class="hud-label" id="myColorLabel">我方</span>
     </div>
     <div class="hud-sep">|</div>
-    <div class="hud-badge">
-      <span class="hud-label">塔</span>
-      <span class="hud-value" id="myTowerCount">0</span>
-    </div>
-    <div class="hud-badge">
-      <span class="hud-label">兵</span>
-      <span class="hud-value" id="mySoldierCount">0</span>
-    </div>
-
-    <!-- Skills in HUD -->
+    <div class="hud-badge"><span class="hud-label">塔</span><span class="hud-value" id="myTowerCount">0</span></div>
+    <div class="hud-badge"><span class="hud-label">兵</span><span class="hud-value" id="mySoldierCount">0</span></div>
     <div class="hud-skills">
       <button class="skill-btn" id="skillNapalmBtn">
         <span class="skill-icon">🔥</span>
@@ -76,10 +77,9 @@
       <button class="skill-btn" id="skillDefectBtn">
         <span class="skill-icon">🌀</span>
         <span class="skill-name">策反</span>
-        <span class="skill-cd" id="skillDefectCd">就緒</span>
+        <span class="skill-cd" id="skillDefectCd">30s</span>
       </button>
     </div>
-
     <div class="hud-hint">拖曳塔來派兵</div>
   </div>
   <div id="gameContainer">
@@ -98,10 +98,9 @@
 <script src="firebase-config.js"></script>
 <script src="game.js"></script>
 <script>
-  const container = document.getElementById('starsContainer');
-  const starCount = window.innerWidth < 600 ? 50 : 100;
-  for (let i=0;i<starCount;i++) {
-    const s=document.createElement('div'); s.className='star';
+  const container=document.getElementById('starsContainer');
+  for(let i=0;i<(window.innerWidth<600?50:100);i++){
+    const s=document.createElement('div');s.className='star';
     const size=Math.random()*1.8+0.6;
     s.style.cssText=`left:${Math.random()*100}%;top:${Math.random()*100}%;width:${size}px;height:${size}px;--d:${2.5+Math.random()*4}s;animation-delay:${Math.random()*4}s;`;
     container.appendChild(s);
