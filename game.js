@@ -120,7 +120,7 @@ function troopDesc(key) {
   if (key==='warrior')  lines.push('路途戰力 ×1.5');
   if (key==='shielder') lines.push('防禦戰力 ×1.5');
   if (key==='heavy')    lines.push('路途戰力 ×2');
-  if (key==='archer')   lines.push('每5秒遠程 0.1傷');
+  if (key==='archer')   lines.push('塔每5秒造成兵數×0.25傷害');
   return lines.join(' · ') || '標準兵種';
 }
 

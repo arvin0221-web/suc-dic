@@ -163,11 +163,17 @@ function enterRoomScreen(roomId) {
 function subscribeRoom(roomId) {
   if (lobby.roomUnsub) { lobby.roomUnsub(); lobby.roomUnsub=null; }
   const ref = db.ref(`rooms/${roomId}`);
+  let timerStarted = false;
   const unsub = ref.on('value', snap => {
     const room = snap.val();
     if (!room) { handleRoomDissolved(); return; }
-    if (room.status === 'starting') return; // game starting, ignore
+    if (room.status === 'starting') return;
     renderRoomScreen(room);
+    // Start live countdown on first data received
+    if (!timerStarted) {
+      timerStarted = true;
+      startRoomTimer(room.createdAt || Date.now());
+    }
   });
   lobby.roomUnsub = () => ref.off('value', unsub);
 
@@ -177,6 +183,7 @@ function subscribeRoom(roomId) {
     if (snap.val() === 'playing') {
       gameRef.off('value', gameUnsub);
       if (lobby.roomUnsub) { lobby.roomUnsub(); lobby.roomUnsub=null; }
+      stopRoomTimer();  // stop countdown when game starts
       db.ref(`games/${roomId}`).once('value').then(snap => {
         const data = snap.val(); if (!data) return;
         const allPlayers = Object.values(data.players).sort((a,b)=>a.joinedAt-b.joinedAt);
@@ -184,11 +191,36 @@ function subscribeRoom(roomId) {
         gs.playerId = lobby.playerId;
         gs.roomId = roomId;
         startGame(roomId, data.towers, data.startTime, data);
-        // If host, run AI
         if (lobby.isHost && data.ais && data.ais.length>0) startAI(data);
       });
     }
   });
+}
+
+// ── Live room timer (updates every second) ──
+let _roomTimerInterval = null;
+function startRoomTimer(createdAt) {
+  if (_roomTimerInterval) clearInterval(_roomTimerInterval);
+  _roomTimerInterval = setInterval(() => {
+    const elapsed   = Date.now() - createdAt;
+    const remaining = Math.max(0, ROOM_TIMEOUT_MS - elapsed);
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    const el   = document.getElementById('roomTimer');
+    if (el) el.textContent = `房間將在 ${mins}:${secs.toString().padStart(2,'0')} 後自動解散`;
+
+    // When expired: any client can dissolve (avoids host browser throttle)
+    if (remaining <= 0) {
+      clearInterval(_roomTimerInterval);
+      _roomTimerInterval = null;
+      if (lobby.roomId) {
+        db.ref(`rooms/${lobby.roomId}`).remove().catch(()=>{});
+      }
+    }
+  }, 1000);
+}
+function stopRoomTimer() {
+  if (_roomTimerInterval) { clearInterval(_roomTimerInterval); _roomTimerInterval = null; }
 }
 
 function renderRoomScreen(room) {
@@ -219,25 +251,17 @@ function renderRoomScreen(room) {
 
   // Host controls
   document.getElementById('hostControls').classList.toggle('hidden', !isHost);
-  const addAiBtn = document.getElementById('addAiBtn');
-  addAiBtn.disabled = total >= MAX_PLAYERS;
+  document.getElementById('addAiBtn').disabled = total >= MAX_PLAYERS;
 
-  // Start button: need at least 2 total
+  // Start button
   const startBtn = document.getElementById('startGameBtn');
   startBtn.disabled = total < 2;
   startBtn.textContent = `▶ 開始遊戲 (${total}人)`;
-
-  // Timer
-  const elapsed = Date.now() - (room.createdAt||Date.now());
-  const remaining = Math.max(0, ROOM_TIMEOUT_MS - elapsed);
-  const mins = Math.floor(remaining/60000);
-  const secs = Math.floor((remaining%60000)/1000);
-  document.getElementById('roomTimer').textContent =
-    `房間將在 ${mins}:${secs.toString().padStart(2,'0')} 後自動解散`;
 }
 
 function handleRoomDissolved() {
   clearTimeout(lobby.roomTimeoutHandle);
+  stopRoomTimer();
   alert('房間已解散');
   leaveRoom();
 }
@@ -307,6 +331,7 @@ async function startGameFromRoom() {
 // ============================================================
 async function leaveRoom() {
   clearTimeout(lobby.roomTimeoutHandle);
+  stopRoomTimer();
   if (lobby.roomUnsub) { lobby.roomUnsub(); lobby.roomUnsub=null; }
 
   if (lobby.roomId && lobby.playerId) {
