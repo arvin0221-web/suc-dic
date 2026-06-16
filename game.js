@@ -14,7 +14,7 @@ const MAP_PADDING = 90;
 const MIN_NEUTRAL = 6, MAX_NEUTRAL = 12;
 const DEFECT_LOCK_SECS = 30;
 const ARCHER_TICK_MS   = 5000;
-const ARCHER_DMG       = 0.1;
+const ARCHER_DMG       = 0.25;  // per soldier in tower, damage = round(soldiers * 0.25)
 
 const TROOPS = {
   cavalry:  { speed:2.5,  pathPow:1.0, defPow:1.0, label:'騎兵', icon:'🐴' },
@@ -167,6 +167,7 @@ function startGame(roomId, towersData, startTime, gameData) {
   gs.fireSweep=null; gs.defectFlash=null;
   gs.cancelledSoldiers=new Set(); gs.combatKeys=new Set();
   arrivedSoldiers.clear();
+  _archerBusy = false;
 
   // Build set of AI player indexes so growth and arrival work for them (host only)
   gs._aiIndexes = new Set();
@@ -265,53 +266,69 @@ function startGrowth(roomId) {
 }
 
 // ===== ARCHER TICK =====
+// Archer TOWERS attack passively every 5s regardless of whether soldiers are marching.
+// Damage = Math.round(tower.soldiers * 0.25), targeting nearest enemy tower.
+// Only the owner of each archer tower fires (or host for AI towers).
+let _archerBusy = false;
 function startArcherTick(roomId) {
-  archerInterval=setInterval(async ()=>{
-    if (gs.phase!=='playing') return;
-    for (const sg of [...gs.soldiers]) {
-      // Only handle squads owned by this client (or AI squads if we are host)
-      const isOurs   = sg.ownerIndex===gs.playerIndex;
-      const isAIHost = lobby?.isHost && gs._aiIndexes?.has(sg.ownerIndex);
-      if (!isOurs && !isAIHost) continue;
-      if ((sg.troop||'warrior')!=='archer') continue;
+  archerInterval = setInterval(() => {
+    if (gs.phase !== 'playing') return;
+    if (_archerBusy) return;
+    _archerBusy = true;
 
-      const curX = sg.fromX + (sg.toX - sg.fromX) * sg.progress;
-      const curY = sg.fromY + (sg.toY - sg.fromY) * sg.progress;
+    const updates = {};
+    const shots   = [];
+
+    for (const [tid, tower] of Object.entries(gs.towers)) {
+      if ((tower.troop || 'warrior') !== 'archer') continue;
+      if (tower.owner < 0) continue; // neutral archer towers don't fire
+      if (tower.soldiers < 1) continue;
+
+      // Only this tower's owner fires (or host if it's an AI tower)
+      const isOurs   = tower.owner === gs.playerIndex;
+      const isAIHost = lobby?.isHost && gs._aiIndexes?.has(tower.owner);
+      if (!isOurs && !isAIHost) continue;
+
+      const dmg = Math.round(tower.soldiers * ARCHER_DMG);
+      if (dmg <= 0) continue;
 
       // Find nearest enemy tower
-      let nearest=null, nearestD=Infinity;
+      let nearest = null, nearestD = Infinity;
       for (const t of Object.values(gs.towers)) {
-        if (t.owner===sg.ownerIndex||t.owner<0) continue;
-        const d=Math.hypot(t.x-curX, t.y-curY);
-        if (d<nearestD){ nearest=t; nearestD=d; }
+        if (t.owner === tower.owner || t.owner < 0) continue;
+        const d = Math.hypot(t.x - tower.x, t.y - tower.y);
+        if (d < nearestD) { nearest = t; nearestD = d; }
       }
       if (!nearest) continue;
 
-      // Apply damage via transaction
-      let hit=false;
-      try {
-        const res=await db.ref(`games/${roomId}/towers/${nearest.id}`).transaction(tower=>{
-          if (!tower) return tower;
-          tower.soldiers=Math.max(0,(tower.soldiers||0)-ARCHER_DMG);
-          return tower;
-        });
-        if (res.committed) hit=true;
-      } catch(e){ continue; }
+      // Optimistic local subtract
+      const newSoldiers = Math.max(0, (gs.towers[nearest.id]?.soldiers || 0) - dmg);
+      if (gs.towers[nearest.id]) gs.towers[nearest.id].soldiers = newSoldiers;
+      updates[`games/${roomId}/towers/${nearest.id}/soldiers`] = newSoldiers;
 
-      if (!hit) continue;
-
-      // Broadcast arrow visual event to ALL clients via Firebase
-      const evId='arrow_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
-      const ev={
-        id:evId, type:'arrow',
-        ownerIndex:sg.ownerIndex,
-        fromX:curX, fromY:curY,
-        toX:nearest.x, toY:nearest.y,
-        at:Date.now(),
-      };
-      try{ db.ref(`games/${roomId}/skillEvents/${evId}`).set(ev); }catch(e){}
+      shots.push({
+        ownerIndex: tower.owner,
+        fromX: tower.x, fromY: tower.y,
+        toX: nearest.x, toY: nearest.y,
+        dmg,
+      });
     }
-  },ARCHER_TICK_MS);
+
+    // Batch write damage
+    if (Object.keys(updates).length) {
+      db.ref().update(updates).catch(() => {}).finally(() => { _archerBusy = false; });
+    } else {
+      _archerBusy = false;
+    }
+
+    // Broadcast arrow visuals
+    for (const shot of shots) {
+      const evId = 'arrow_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+      db.ref(`games/${roomId}/skillEvents/${evId}`).set({
+        id: evId, type: 'arrow', at: Date.now(), ...shot,
+      }).catch(() => {});
+    }
+  }, ARCHER_TICK_MS);
 }
 
 // ===== INPUT =====
@@ -711,23 +728,32 @@ function handleArrowEvent(ev) {
   const from = mapToCanvas(ev.fromX, ev.fromY);
   const to   = mapToCanvas(ev.toX,   ev.toY);
 
-  // Spawn the animated arrow projectile
+  // Animated arrow projectile
   gs.arrowParticles.push({
     x0:from.x, y0:from.y,
     x1:to.x,   y1:to.y,
     color: col,
-    t: 0,
-    alpha: 1,
+    t: 0, alpha: 1,
   });
 
-  // Muzzle flash at archer position
+  // Muzzle flash at tower
   spawnArcherMuzzle(from.x, from.y, col);
 
-  // Schedule impact effect for when arrow arrives (~travel time based on distance)
-  const dist = Math.hypot(to.x-from.x, to.y-from.y);
-  const travelMs = Math.max(300, dist * 2.5); // roughly proportional
+  // Impact + floating damage number after travel
+  const dist     = Math.hypot(to.x-from.x, to.y-from.y);
+  const travelMs = Math.max(200, dist * 2.0);
   setTimeout(() => {
     spawnArrowImpact(to.x, to.y, col);
+    // Floating damage number
+    if (ev.dmg) {
+      gs.floatingTexts = gs.floatingTexts || [];
+      gs.floatingTexts.push({
+        x: to.x, y: to.y - 20,
+        text: `-${ev.dmg}`,
+        color: col,
+        alpha: 1, life: 1.2, vy: -40,
+      });
+    }
   }, travelMs);
 }
 
@@ -792,6 +818,16 @@ function update(dt) {
   gs.arrowParticles=gs.arrowParticles.filter(ap=>ap.t<1.05);
 
   if (gs.screenShake>0) gs.screenShake=Math.max(0,gs.screenShake-dt*55);
+
+  // Floating damage texts
+  gs.floatingTexts = gs.floatingTexts || [];
+  for (const ft of gs.floatingTexts) {
+    ft.y   += ft.vy * dt;
+    ft.life -= dt;
+    ft.alpha = Math.max(0, ft.life / 1.2);
+  }
+  gs.floatingTexts = gs.floatingTexts.filter(ft => ft.life > 0);
+
   updateHUD();
   if (now-gs._lastSkillUIUpdate>300){updateSkillUI();gs._lastSkillUIUpdate=now;}
 }
@@ -823,6 +859,7 @@ function draw() {
   drawSkillOverlay();
   drawParticles();
   drawDefectFlash();
+  drawFloatingTexts();
   ctx.restore();
 }
 
@@ -1217,6 +1254,21 @@ function spawnDefectSpiral(x,y,color){
   }
 }
 
+
+function drawFloatingTexts() {
+  for (const ft of (gs.floatingTexts || [])) {
+    ctx.save();
+    ctx.globalAlpha   = ft.alpha;
+    ctx.fillStyle     = ft.color;
+    ctx.font          = 'bold 14px monospace';
+    ctx.textAlign     = 'center';
+    ctx.textBaseline  = 'middle';
+    ctx.shadowBlur    = 6;
+    ctx.shadowColor   = ft.color;
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+  }
+}
 
 // ===== BOOT =====
 window.addEventListener('load',()=>{
